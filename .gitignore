@@ -1,0 +1,30 @@
+# Dependencias
+node_modules/
+
+# Builds
+dist/
+dist-electron/
+out/
+build/
+
+# Expo
+.expo/
+web-build/
+
+# Electron
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Credenciales y config local
+google-credentials.json
+tokens.json
+config.json
+*.local
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Herramientas locales
+.claude/

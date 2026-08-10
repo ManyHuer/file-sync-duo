@@ -1,0 +1,17 @@
+{
+  "name": "file-sync",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "desktop:dev": "pnpm --filter desktop dev",
+    "mobile:start": "pnpm --filter mobile start",
+    "core:check": "pnpm --filter @filesync/core check"
+  },
+  "packageManager": "pnpm@10.34.5",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  }
+}
