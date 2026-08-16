@@ -1,4 +1,6 @@
 import { conflictName, hasConflictSuffix } from "./conflict";
+import { findOrphans } from "./sync";
+import { DriveClient, LocalFS } from "./types";
 
 function utf8ToBase64(str: string): string {
   const bytes = new TextEncoder().encode(str);
@@ -39,3 +41,39 @@ if (failed > 0) {
   process.exit(1);
 }
 console.log(`OK: conflictName("nota.md") -> "${name}"`);
+
+const fakeClient: DriveClient = {
+  listFiles: async () => [
+    { id: "a.md", name: "a.md", modifiedTime: "2026-01-01T00:00:00.000Z" },
+    { id: "b.md", name: "b.md", modifiedTime: "2026-01-01T00:00:00.000Z" },
+  ],
+  upload: async () => {},
+  download: async () => "",
+  touch: async () => {},
+  delete: async () => {},
+  commitMeta: async () => {},
+};
+
+const fakeFs: LocalFS = {
+  list: async () => [
+    { name: "a.md", modifiedTime: 1 },
+    { name: "c.md", modifiedTime: 1 },
+  ],
+  read: async () => "",
+  write: async () => {},
+  stat: async () => 1,
+  setMtime: async () => {},
+  delete: async () => {},
+};
+
+(async () => {
+  const pushOrphans = await findOrphans(fakeClient, fakeFs, "push");
+  assert(pushOrphans.length === 1 && pushOrphans[0] === "b.md", "push: b.md existe en repo pero no local");
+  const pullOrphans = await findOrphans(fakeClient, fakeFs, "pull");
+  assert(pullOrphans.length === 1 && pullOrphans[0] === "c.md", "pull: c.md existe local pero no en repo");
+  if (failed > 0) {
+    console.error(`${failed} assertions fallaron`);
+    process.exit(1);
+  }
+  console.log("OK: findOrphans detecta archivos huérfanos en ambas direcciones");
+})();

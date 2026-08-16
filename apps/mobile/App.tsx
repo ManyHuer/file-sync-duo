@@ -3,13 +3,14 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View, ScrollView, Pressable, Alert, TextInput } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
-import { GitHubClient, sync } from '@filesync/core';
+import { GitHubClient, sync, findOrphans } from '@filesync/core';
 import type { LocalFileMeta } from '@filesync/core';
 
 const CONFIG_KEY = 'filesync_config';
 const SAF_URI_KEY = 'filesync_saf_uri';
 const SANDBOX_DIR = `${FileSystem.documentDirectory}FileSync/`;
 const META_PATH = `${FileSystem.documentDirectory}filesync-local-meta.json`;
+const SAF_INDEX_PATH = `${FileSystem.documentDirectory}filesync-saf-index.json`;
 
 interface AppConfig {
   owner: string;
@@ -41,6 +42,19 @@ async function saveLocalMeta(meta: Record<string, number>): Promise<void> {
   await FileSystem.writeAsStringAsync(META_PATH, JSON.stringify(meta));
 }
 
+async function loadSafIndex(): Promise<Record<string, string>> {
+  try {
+    const raw = await FileSystem.readAsStringAsync(SAF_INDEX_PATH);
+    return JSON.parse(raw) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+async function saveSafIndex(index: Record<string, string>): Promise<void> {
+  await FileSystem.writeAsStringAsync(SAF_INDEX_PATH, JSON.stringify(index));
+}
+
 async function safEnsureDir(): Promise<void> {
   if (storage.safUri) return;
   const info = await FileSystem.getInfoAsync(SANDBOX_DIR);
@@ -53,11 +67,26 @@ async function safList(): Promise<LocalFileMeta[]> {
   await safEnsureDir();
   const meta = await loadLocalMeta();
   if (storage.safUri) {
+    const index = await loadSafIndex();
+    const files: LocalFileMeta[] = [];
+    for (const [name, uri] of Object.entries(index)) {
+      if (!name.endsWith('.md')) continue;
+      try {
+        await FileSystem.StorageAccessFramework.readAsStringAsync(uri);
+        files.push({ name, modifiedTime: meta[name] ?? 0 });
+      } catch {
+        delete index[name];
+      }
+    }
     const uris = await FileSystem.StorageAccessFramework.readDirectoryAsync(storage.safUri);
-    return uris
-      .map((uri) => nameFromSafUri(uri))
-      .filter((name) => name.endsWith('.md'))
-      .map((name) => ({ name, modifiedTime: meta[name] ?? 0 }));
+    for (const uri of uris) {
+      const name = nameFromSafUri(uri);
+      if (!name.endsWith('.md') || index[name]) continue;
+      files.push({ name, modifiedTime: meta[name] ?? 0 });
+      index[name] = uri;
+    }
+    await saveSafIndex(index);
+    return files;
   }
   const names = await FileSystem.readDirectoryAsync(SANDBOX_DIR);
   const files: LocalFileMeta[] = [];
@@ -73,6 +102,16 @@ async function safList(): Promise<LocalFileMeta[]> {
 async function safRead(name: string): Promise<string> {
   await safEnsureDir();
   if (storage.safUri) {
+    const index = await loadSafIndex();
+    const known = index[name];
+    if (known) {
+      try {
+        return await FileSystem.StorageAccessFramework.readAsStringAsync(known);
+      } catch {
+        delete index[name];
+        await saveSafIndex(index);
+      }
+    }
     const uris = await FileSystem.StorageAccessFramework.readDirectoryAsync(storage.safUri);
     const target = uris.find((uri) => nameFromSafUri(uri) === name);
     if (!target) throw new Error(`No se encontró "${name}" en la carpeta elegida.`);
@@ -85,15 +124,30 @@ async function safWrite(name: string, content: string): Promise<void> {
   await safEnsureDir();
   const meta = await loadLocalMeta();
   if (storage.safUri) {
+    const index = await loadSafIndex();
+    const known = index[name];
+    if (known) {
+      try {
+        await FileSystem.StorageAccessFramework.writeAsStringAsync(known, content);
+        meta[name] = Date.now();
+        await saveLocalMeta(meta);
+        return;
+      } catch {
+        delete index[name];
+      }
+    }
     const uris = await FileSystem.StorageAccessFramework.readDirectoryAsync(storage.safUri);
     const target = uris.find((uri) => nameFromSafUri(uri) === name);
     if (target) {
       await FileSystem.StorageAccessFramework.writeAsStringAsync(target, content);
+      index[name] = target;
     } else {
       const base = name.replace(/\.md$/, '');
       const uri = await FileSystem.StorageAccessFramework.createFileAsync(storage.safUri, base, 'text/markdown');
       await FileSystem.StorageAccessFramework.writeAsStringAsync(uri, content);
+      index[name] = uri;
     }
+    await saveSafIndex(index);
   } else {
     await FileSystem.writeAsStringAsync(`${SANDBOX_DIR}${name}`, content);
   }
@@ -106,11 +160,50 @@ async function safStat(name: string): Promise<number> {
   return meta[name] ?? 0;
 }
 
+async function safSetMtime(name: string, modifiedTime: number): Promise<void> {
+  const meta = await loadLocalMeta();
+  meta[name] = modifiedTime;
+  await saveLocalMeta(meta);
+}
+
+async function safDelete(name: string): Promise<void> {
+  await safEnsureDir();
+  const meta = await loadLocalMeta();
+  if (storage.safUri) {
+    const index = await loadSafIndex();
+    const known = index[name];
+    if (known) {
+      try {
+        await FileSystem.deleteAsync(known, { idempotent: true });
+        delete index[name];
+        await saveSafIndex(index);
+        delete meta[name];
+        await saveLocalMeta(meta);
+        return;
+      } catch {
+        delete index[name];
+        await saveSafIndex(index);
+      }
+    }
+    const uris = await FileSystem.StorageAccessFramework.readDirectoryAsync(storage.safUri);
+    const target = uris.find((uri) => nameFromSafUri(uri) === name);
+    if (target) {
+      await FileSystem.deleteAsync(target, { idempotent: true });
+    }
+  } else {
+    await FileSystem.deleteAsync(`${SANDBOX_DIR}${name}`, { idempotent: true });
+  }
+  delete meta[name];
+  await saveLocalMeta(meta);
+}
+
 const localFs = {
   list: safList,
   read: safRead,
   write: safWrite,
   stat: safStat,
+  setMtime: safSetMtime,
+  delete: safDelete,
 };
 
 export default function App() {
@@ -205,6 +298,38 @@ export default function App() {
     setLogs([]);
     try {
       const client = new GitHubClient(config);
+      const orphans = await findOrphans(client, localFs, direction);
+      if (orphans.length > 0) {
+        setBusy(false);
+        Alert.alert(
+          'Sincronizar eliminaciones',
+          direction === 'push'
+            ? `Estos archivos existen en GitHub pero no en tu teléfono. Se eliminarán de GitHub:\n\n${orphans.join('\n')}`
+            : `Estos archivos existen en tu teléfono pero no en GitHub. Se eliminarán de tu teléfono:\n\n${orphans.join('\n')}`,
+          [
+            { text: 'No, solo sincronizar', style: 'cancel', onPress: () => doSync(client, direction) },
+            { text: 'Sí, eliminar', style: 'destructive', onPress: () => confirmOrphans(client, direction, orphans) },
+          ],
+        );
+        return;
+      }
+      await doSync(client, direction);
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      if (msg.includes('TOKEN')) {
+        setError('Token inválido o expirado. Verifica tu token en la configuración.');
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doSync(client: GitHubClient, direction: 'push' | 'pull') {
+    setBusy(true);
+    setError(null);
+    try {
       const s = sync(client, localFs, { onLog: appendLog });
       const summary = direction === 'push' ? await s.push() : await s.pull();
       appendLog(`--- Resumen: subidos ${summary.uploaded.length}, descargados ${summary.downloaded.length}, conflictos ${summary.conflicts.length}, sin cambios ${summary.skipped.length}`);
@@ -221,6 +346,28 @@ export default function App() {
     }
   }
 
+  async function confirmOrphans(client: GitHubClient, direction: 'push' | 'pull', files: string[]) {
+    setBusy(true);
+    setError(null);
+    try {
+      for (const name of files) {
+        if (direction === 'push') {
+          await client.delete(name);
+          appendLog(`Eliminado de GitHub: "${name}"`);
+        } else {
+          await localFs.delete(name);
+          appendLog(`Eliminado local: "${name}"`);
+        }
+      }
+      if (direction === 'push') await client.commitMeta();
+      await doSync(client, direction);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createFile() {
     const name = newFileName.trim();
     if (!name) return;
@@ -232,6 +379,35 @@ export default function App() {
     } catch (e: any) {
       setError(String(e?.message ?? e));
     }
+  }
+
+  async function confirmDelete(name: string) {
+    if (!config) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const client = new GitHubClient(config);
+      await client.delete(name);
+      await localFs.delete(name);
+      await client.commitMeta();
+      appendLog(`Eliminado "${name}" de local y GitHub`);
+      await refreshLocal();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function askDelete(name: string) {
+    Alert.alert(
+      'Eliminar archivo',
+      `¿Eliminar "${name}" de local y GitHub? Esta acción no se puede deshacer.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Eliminar', style: 'destructive', onPress: () => confirmDelete(name) },
+      ],
+    );
   }
 
   return (
@@ -356,10 +532,19 @@ export default function App() {
             ) : (
               localFiles.map((f) => (
                 <View key={f.name} style={styles.fileRow}>
-                  <Text style={styles.fileName}>{f.name}</Text>
-                  <Text style={styles.muted}>
-                    {new Date(f.modifiedTime).toLocaleString()}
-                  </Text>
+                  <View style={styles.fileInfo}>
+                    <Text style={styles.fileName}>{f.name}</Text>
+                    <Text style={styles.muted}>
+                      {new Date(f.modifiedTime).toLocaleString()}
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={[styles.button, styles.dangerSmall]}
+                    onPress={() => askDelete(f.name)}
+                    disabled={busy}
+                  >
+                    <Text style={styles.buttonText}>Eliminar</Text>
+                  </Pressable>
                 </View>
               ))
             )}
@@ -491,12 +676,24 @@ const styles = StyleSheet.create({
   fileRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#232833',
   },
+  fileInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
   fileName: {
     color: '#e6e6e6',
+  },
+  dangerSmall: {
+    backgroundColor: '#c0392b',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    marginBottom: 0,
   },
   muted: {
     color: '#9aa4b2',

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GitHubClient, sync } from "@filesync/core";
+import { GitHubClient, sync, findOrphans } from "@filesync/core";
 import type { LocalFS, SyncSummary } from "@filesync/core";
 import "./styles.css";
 
@@ -14,6 +14,8 @@ declare global {
       readFile: (name: string) => Promise<string>;
       writeFile: (name: string, content: string) => Promise<void>;
       statFile: (name: string) => Promise<number>;
+      setMtime: (name: string, modifiedTime: number) => Promise<void>;
+      deleteFile: (name: string) => Promise<void>;
     };
   }
 }
@@ -28,6 +30,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [orphanConfirm, setOrphanConfirm] = useState<{ direction: "push" | "pull"; files: string[] } | null>(null);
 
   useEffect(() => {
     window.fileSync.getConfig().then((c) => {
@@ -71,6 +75,28 @@ export default function App() {
     }
   }
 
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    const name = deleteTarget;
+    setDeleteTarget(null);
+    setBusy(true);
+    setError(null);
+    try {
+      const token = await window.fileSync.getToken();
+      if (!token || !config) throw new Error("Configura la conexión primero.");
+      const client = new GitHubClient({ owner: config.owner, repo: config.repo, token });
+      await client.delete(name);
+      await window.fileSync.deleteFile(name);
+      await client.commitMeta();
+      appendLog(`Eliminado "${name}" de local y GitHub`);
+      await refreshLocal();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function runSync(direction: "push" | "pull") {
     setBusy(true);
     setError(null);
@@ -84,13 +110,15 @@ export default function App() {
         read: (name) => window.fileSync.readFile(name),
         write: (name, content) => window.fileSync.writeFile(name, content),
         stat: (name) => window.fileSync.statFile(name),
+        setMtime: (name, modifiedTime) => window.fileSync.setMtime(name, modifiedTime),
+        delete: (name) => window.fileSync.deleteFile(name),
       };
-      const s = sync(client, fsAdapter, { onLog: appendLog });
-      const summary = direction === "push" ? await s.push() : await s.pull();
-      appendLog("--- Resumen ---");
-      appendLog(`Subidos: ${summary.uploaded.length}, Descargados: ${summary.downloaded.length}`);
-      appendLog(`Conflictos: ${summary.conflicts.length}, Sin cambios: ${summary.skipped.length}`);
-      await refreshLocal();
+      const orphans = await findOrphans(client, fsAdapter, direction);
+      if (orphans.length > 0) {
+        setOrphanConfirm({ direction, files: orphans });
+        return;
+      }
+      await doSync(client, fsAdapter, direction);
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       if (msg.includes("TOKEN")) {
@@ -98,6 +126,51 @@ export default function App() {
       } else {
         setError(msg);
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doSync(client: GitHubClient, fsAdapter: LocalFS, direction: "push" | "pull") {
+    const s = sync(client, fsAdapter, { onLog: appendLog });
+    const summary = direction === "push" ? await s.push() : await s.pull();
+    appendLog("--- Resumen ---");
+    appendLog(`Subidos: ${summary.uploaded.length}, Descargados: ${summary.downloaded.length}`);
+    appendLog(`Conflictos: ${summary.conflicts.length}, Sin cambios: ${summary.skipped.length}`);
+    await refreshLocal();
+  }
+
+  async function confirmOrphans() {
+    if (!orphanConfirm) return;
+    const { direction, files } = orphanConfirm;
+    setOrphanConfirm(null);
+    setBusy(true);
+    setError(null);
+    try {
+      const token = await window.fileSync.getToken();
+      if (!token || !config) throw new Error("Configura la conexión primero.");
+      const client = new GitHubClient({ owner: config.owner, repo: config.repo, token });
+      const fsAdapter: LocalFS = {
+        list: () => window.fileSync.listFiles(),
+        read: (name) => window.fileSync.readFile(name),
+        write: (name, content) => window.fileSync.writeFile(name, content),
+        stat: (name) => window.fileSync.statFile(name),
+        setMtime: (name, modifiedTime) => window.fileSync.setMtime(name, modifiedTime),
+        delete: (name) => window.fileSync.deleteFile(name),
+      };
+      for (const name of files) {
+        if (direction === "push") {
+          await client.delete(name);
+          appendLog(`Eliminado de GitHub: "${name}"`);
+        } else {
+          await fsAdapter.delete(name);
+          appendLog(`Eliminado local: "${name}"`);
+        }
+      }
+      if (direction === "push") await client.commitMeta();
+      await doSync(client, fsAdapter, direction);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
     } finally {
       setBusy(false);
     }
@@ -177,7 +250,12 @@ export default function App() {
                 {localFiles.map((f) => (
                   <li key={f.name}>
                     <span>{f.name}</span>
-                    <span className="muted">{new Date(f.modifiedTime).toLocaleString()}</span>
+                    <span className="file-right">
+                      <span className="muted">{new Date(f.modifiedTime).toLocaleString()}</span>
+                      <button className="btn danger" disabled={busy} onClick={() => setDeleteTarget(f.name)}>
+                        Eliminar
+                      </button>
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -195,6 +273,52 @@ export default function App() {
             </section>
           )}
         </>
+      )}
+
+      {deleteTarget && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3>¿Eliminar archivo?</h3>
+            <p>
+              Se eliminará <code>{deleteTarget}</code> de la carpeta local y de GitHub.
+              Esta acción no se puede deshacer.
+            </p>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setDeleteTarget(null)} disabled={busy}>
+                Cancelar
+              </button>
+              <button className="btn danger" onClick={confirmDelete} disabled={busy}>
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {orphanConfirm && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3>Sincronizar eliminaciones</h3>
+            <p>
+              {orphanConfirm.direction === "push"
+                ? "Estos archivos existen en GitHub pero no en tu carpeta local. Se eliminarán de GitHub."
+                : "Estos archivos existen en tu carpeta local pero no en GitHub. Se eliminarán de tu carpeta."}
+            </p>
+            <ul className="orphan-list">
+              {orphanConfirm.files.map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+            </ul>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setOrphanConfirm(null)} disabled={busy}>
+                No, solo sincronizar
+              </button>
+              <button className="btn danger" onClick={confirmOrphans} disabled={busy}>
+                Sí, eliminar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

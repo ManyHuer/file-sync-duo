@@ -97,6 +97,14 @@ function registerIpc() {
   ipcMain.handle("fs:stat", async (_e, name: string) => {
     return Math.round(statSync(path.join(getSyncDir(), name)).mtimeMs);
   });
+
+  ipcMain.handle("fs:setMtime", async (_e, name: string, modifiedTime: number) => {
+    await fs.utimes(path.join(getSyncDir(), name), modifiedTime / 1000, modifiedTime / 1000);
+  });
+
+  ipcMain.handle("fs:delete", async (_e, name: string) => {
+    await fs.unlink(path.join(getSyncDir(), name));
+  });
 }
 
 app.whenReady().then(() => {

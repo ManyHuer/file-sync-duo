@@ -60,10 +60,20 @@ export function sync(
         summary.skipped.push(file.name);
       } else {
         log.onLog?.(`Descargando "${file.name}"...`);
-        const content = await client.download(file.id);
-        await fs.write(file.name, content);
-        await client.touch(file.name, await fs.stat(file.name));
-        summary.downloaded.push(file.name);
+        try {
+          const content = await client.download(file.id);
+          await fs.write(file.name, content);
+          await fs.setMtime(file.name, remoteTime);
+          await client.touch(file.name, remoteTime);
+          summary.downloaded.push(file.name);
+        } catch (e: any) {
+          if (String(e?.message ?? e).includes("GitHub API 404")) {
+            log.onLog?.(`"${file.name}" ya no existe en GitHub, omitiendo`);
+            summary.skipped.push(file.name);
+          } else {
+            throw e;
+          }
+        }
       }
     }
     await client.commitMeta();
@@ -71,6 +81,23 @@ export function sync(
   }
 
   return { push, pull };
+}
+
+export async function findOrphans(
+  client: DriveClient,
+  fs: LocalFS,
+  direction: "push" | "pull",
+): Promise<string[]> {
+  const localNames = new Set(
+    (await fs.list()).filter((f) => f.name.endsWith(".md")).map((f) => f.name),
+  );
+  const remoteNames = new Set(
+    (await client.listFiles()).filter((f) => f.name.endsWith(".md")).map((f) => f.name),
+  );
+  if (direction === "push") {
+    return [...remoteNames].filter((name) => !localNames.has(name));
+  }
+  return [...localNames].filter((name) => !remoteNames.has(name));
 }
 
 export { hasConflictSuffix };

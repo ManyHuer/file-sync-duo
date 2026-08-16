@@ -14,6 +14,7 @@ export interface DriveClient {
   upload(name: string, content: string, modifiedTime: number): Promise<void>;
   download(fileId: string): Promise<string>;
   touch(name: string, modifiedTime: number): Promise<void>;
+  delete(name: string): Promise<void>;
   commitMeta(): Promise<void>;
 }
 
@@ -22,6 +23,8 @@ export interface LocalFS {
   read(name: string): Promise<string>;
   write(name: string, content: string): Promise<void>;
   stat(name: string): Promise<number>;
+  setMtime(name: string, modifiedTime: number): Promise<void>;
+  delete(name: string): Promise<void>;
 }
 
 export interface SyncSummary {

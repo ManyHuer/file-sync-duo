@@ -10,4 +10,6 @@ contextBridge.exposeInMainWorld("fileSync", {
   readFile: (name: string) => ipcRenderer.invoke("fs:read", name),
   writeFile: (name: string, content: string) => ipcRenderer.invoke("fs:write", name, content),
   statFile: (name: string) => ipcRenderer.invoke("fs:stat", name),
+  setMtime: (name: string, modifiedTime: number) => ipcRenderer.invoke("fs:setMtime", name, modifiedTime),
+  deleteFile: (name: string) => ipcRenderer.invoke("fs:delete", name),
 });

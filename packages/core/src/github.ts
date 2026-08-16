@@ -83,12 +83,12 @@ export class GitHubClient {
       content: utf8ToBase64(JSON.stringify(this.meta)),
     };
     if (this.metaSha) body.sha = this.metaSha;
-    const res = await this.request<{ sha: string }>(this.repoPath(META_FILE), {
+    const res = await this.request<{ content: { sha: string } }>(this.repoPath(META_FILE), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    this.metaSha = res.sha;
+    this.metaSha = res.content.sha;
   }
 
   async listFiles(): Promise<DriveFileMeta[]> {
@@ -133,5 +133,17 @@ export class GitHubClient {
   async touch(name: string, modifiedTime: number): Promise<void> {
     const meta = await this.loadMeta();
     meta[name] = modifiedTime;
+  }
+
+  async delete(name: string): Promise<void> {
+    const sha = await this.getFileSha(name);
+    if (!sha) return;
+    await this.request(this.repoPath(encodeURIComponent(name)), {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: `delete ${name}`, sha }),
+    });
+    const meta = await this.loadMeta();
+    delete meta[name];
   }
 }
