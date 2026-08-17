@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { GitHubClient, sync, findOrphans } from "@filesync/core";
-import type { LocalFS, SyncSummary } from "@filesync/core";
+import type { DriveClient, LocalFS } from "@filesync/core";
 import "./styles.css";
 
 declare global {
@@ -11,13 +11,20 @@ declare global {
       getToken: () => Promise<string | null>;
       chooseDir: () => Promise<{ canceled: boolean; syncDir?: string }>;
       listFiles: () => Promise<{ name: string; modifiedTime: number }[]>;
+      listFolders: () => Promise<string[]>;
       readFile: (name: string) => Promise<string>;
       writeFile: (name: string, content: string) => Promise<void>;
       statFile: (name: string) => Promise<number>;
       setMtime: (name: string, modifiedTime: number) => Promise<void>;
       deleteFile: (name: string) => Promise<void>;
+      createFolder: (name: string) => Promise<{ ok: boolean; error?: string }>;
     };
   }
+}
+
+interface LocalFile {
+  name: string;
+  modifiedTime: number;
 }
 
 export default function App() {
@@ -26,12 +33,18 @@ export default function App() {
   const [repo, setRepo] = useState("");
   const [token, setToken] = useState("");
   const [syncDir, setSyncDir] = useState("");
-  const [localFiles, setLocalFiles] = useState<{ name: string; modifiedTime: number }[]>([]);
+  const [localFiles, setLocalFiles] = useState<LocalFile[]>([]);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  const [deleteConfirm, setDeleteConfirm] = useState<string[] | null>(null);
   const [orphanConfirm, setOrphanConfirm] = useState<{ direction: "push" | "pull"; files: string[] } | null>(null);
+  const [showCreateFolder, setShowCreateFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [deleteFolderConfirm, setDeleteFolderConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     window.fileSync.getConfig().then((c) => {
@@ -47,7 +60,10 @@ export default function App() {
 
   async function refreshLocal() {
     const files = await window.fileSync.listFiles();
-    setLocalFiles(files.filter((f) => f.name.endsWith(".md")));
+    const mdFiles = files.filter((f) => f.name.endsWith(".md"));
+    setLocalFiles(mdFiles);
+    const folderList = await window.fileSync.listFolders();
+    setFolders(folderList);
   }
 
   function appendLog(msg: string) {
@@ -75,26 +91,118 @@ export default function App() {
     }
   }
 
-  async function confirmDelete() {
-    if (!deleteTarget) return;
-    const name = deleteTarget;
-    setDeleteTarget(null);
+  async function handleCreateFolder() {
+    const name = newFolderName.trim();
+    if (!name) return;
+    if (name.startsWith(".")) {
+      setError("El nombre de la carpeta no puede empezar con un punto.");
+      return;
+    }
+    setError(null);
+    const result = await window.fileSync.createFolder(name);
+    if (!result.ok) {
+      setError(result.error ?? "No se pudo crear la carpeta.");
+      return;
+    }
+    setNewFolderName("");
+    setShowCreateFolder(false);
+    await refreshLocal();
+  }
+
+  async function confirmDeleteFolder() {
+    if (!deleteFolderConfirm) return;
+    const folder = deleteFolderConfirm;
+    setDeleteFolderConfirm(null);
     setBusy(true);
     setError(null);
     try {
       const token = await window.fileSync.getToken();
       if (!token || !config) throw new Error("Configura la conexión primero.");
       const client = new GitHubClient({ owner: config.owner, repo: config.repo, token });
-      await client.delete(name);
-      await window.fileSync.deleteFile(name);
+      const filesInFolder = localFiles.filter((f) => f.name.startsWith(folder + "/"));
+      for (const f of filesInFolder) {
+        await client.delete(f.name);
+      }
       await client.commitMeta();
-      appendLog(`Eliminado "${name}" de local y GitHub`);
+      for (const f of filesInFolder) {
+        await window.fileSync.deleteFile(f.name);
+      }
+      await window.fileSync.deleteFile(folder);
+      appendLog(`Carpeta "${folder}" eliminada`);
       await refreshLocal();
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function confirmDelete() {
+    if (!deleteConfirm || deleteConfirm.length === 0) return;
+    const names = [...deleteConfirm];
+    setDeleteConfirm(null);
+    setSelectedFiles([]);
+    setBusy(true);
+    setError(null);
+    try {
+      const token = await window.fileSync.getToken();
+      if (!token || !config) throw new Error("Configura la conexión primero.");
+      const client = new GitHubClient({ owner: config.owner, repo: config.repo, token });
+      for (const name of names) {
+        await client.delete(name);
+      }
+      await client.commitMeta();
+      for (const name of names) {
+        await window.fileSync.deleteFile(name);
+      }
+      appendLog(`Eliminados: ${names.join(", ")}`);
+      await refreshLocal();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleSelect(name: string) {
+    setSelectedFiles((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+    );
+  }
+
+  function makeScopedAdapter(): LocalFS {
+    const base: LocalFS = {
+      list: () => window.fileSync.listFiles(),
+      read: (name) => window.fileSync.readFile(name),
+      write: (name, content) => window.fileSync.writeFile(name, content),
+      stat: (name) => window.fileSync.statFile(name),
+      setMtime: (name, modifiedTime) => window.fileSync.setMtime(name, modifiedTime),
+      delete: (name) => window.fileSync.deleteFile(name),
+    };
+    if (!currentFolder) return base;
+    return {
+      ...base,
+      list: async () => {
+        const all = await base.list();
+        return all.filter((f) => f.name.startsWith(currentFolder + "/"));
+      },
+    };
+  }
+
+  function makeScopedClient(client: GitHubClient): DriveClient {
+    if (!currentFolder) return client;
+    const prefix = currentFolder + "/";
+    return {
+      listFiles: async () => {
+        const all = await client.listFiles();
+        return all.filter((f) => f.name.startsWith(prefix));
+      },
+      upload: client.upload.bind(client),
+      download: client.download.bind(client),
+      touch: client.touch.bind(client),
+      delete: client.delete.bind(client),
+      commitMeta: client.commitMeta.bind(client),
+    };
   }
 
   async function runSync(direction: "push" | "pull") {
@@ -105,20 +213,14 @@ export default function App() {
       const token = await window.fileSync.getToken();
       if (!token || !config) throw new Error("Configura la conexión primero.");
       const client = new GitHubClient({ owner: config.owner, repo: config.repo, token });
-      const fsAdapter: LocalFS = {
-        list: () => window.fileSync.listFiles(),
-        read: (name) => window.fileSync.readFile(name),
-        write: (name, content) => window.fileSync.writeFile(name, content),
-        stat: (name) => window.fileSync.statFile(name),
-        setMtime: (name, modifiedTime) => window.fileSync.setMtime(name, modifiedTime),
-        delete: (name) => window.fileSync.deleteFile(name),
-      };
-      const orphans = await findOrphans(client, fsAdapter, direction);
+      const fsAdapter = makeScopedAdapter();
+      const scopedClient = makeScopedClient(client);
+      const orphans = await findOrphans(scopedClient, fsAdapter, direction);
       if (orphans.length > 0) {
         setOrphanConfirm({ direction, files: orphans });
         return;
       }
-      await doSync(client, fsAdapter, direction);
+      await doSync(scopedClient, fsAdapter, direction);
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       if (msg.includes("TOKEN")) {
@@ -131,7 +233,7 @@ export default function App() {
     }
   }
 
-  async function doSync(client: GitHubClient, fsAdapter: LocalFS, direction: "push" | "pull") {
+  async function doSync(client: DriveClient, fsAdapter: LocalFS, direction: "push" | "pull") {
     const s = sync(client, fsAdapter, { onLog: appendLog });
     const summary = direction === "push" ? await s.push() : await s.pull();
     appendLog("--- Resumen ---");
@@ -150,31 +252,40 @@ export default function App() {
       const token = await window.fileSync.getToken();
       if (!token || !config) throw new Error("Configura la conexión primero.");
       const client = new GitHubClient({ owner: config.owner, repo: config.repo, token });
-      const fsAdapter: LocalFS = {
-        list: () => window.fileSync.listFiles(),
-        read: (name) => window.fileSync.readFile(name),
-        write: (name, content) => window.fileSync.writeFile(name, content),
-        stat: (name) => window.fileSync.statFile(name),
-        setMtime: (name, modifiedTime) => window.fileSync.setMtime(name, modifiedTime),
-        delete: (name) => window.fileSync.deleteFile(name),
-      };
+      const fsAdapter = makeScopedAdapter();
+      const scopedClient = makeScopedClient(client);
       for (const name of files) {
         if (direction === "push") {
-          await client.delete(name);
+          await scopedClient.delete(name);
           appendLog(`Eliminado de GitHub: "${name}"`);
         } else {
           await fsAdapter.delete(name);
           appendLog(`Eliminado local: "${name}"`);
         }
       }
-      if (direction === "push") await client.commitMeta();
-      await doSync(client, fsAdapter, direction);
+      if (direction === "push") await scopedClient.commitMeta();
+      await doSync(scopedClient, fsAdapter, direction);
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
       setBusy(false);
     }
   }
+
+  function enterFolder(folder: string) {
+    setCurrentFolder(folder);
+    setSelectedFiles([]);
+  }
+
+  function goToRoot() {
+    setCurrentFolder(null);
+    setSelectedFiles([]);
+  }
+
+  const rootFiles = localFiles.filter((f) => !f.name.includes("/"));
+  const folderFiles = currentFolder
+    ? localFiles.filter((f) => f.name.startsWith(currentFolder + "/"))
+    : [];
 
   return (
     <div className="app">
@@ -237,28 +348,122 @@ export default function App() {
                 Descargar de GitHub
               </button>
             </div>
+            {currentFolder && (
+              <p className="hint">Sincronizando solo la carpeta: <code>{currentFolder}</code></p>
+            )}
           </section>
 
           <section className="card">
-            <h2>Archivos locales (.md)</h2>
-            {localFiles.length === 0 ? (
+            <div className="card-header">
+              <h2>
+                {currentFolder ? (
+                  <>
+                    <button className="btn back-btn" onClick={goToRoot}>
+                      ← Volver
+                    </button>
+                    <span>📁 {currentFolder}</span>
+                  </>
+                ) : (
+                  <span>Archivos locales (.md)</span>
+                )}
+              </h2>
+              {!currentFolder && (
+                <button className="btn" onClick={() => setShowCreateFolder(true)}>
+                  + Nueva carpeta
+                </button>
+              )}
+            </div>
+
+            {showCreateFolder && (
+              <div className="create-folder-row">
+                <input
+                  className="input"
+                  placeholder="Nombre de la carpeta"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleCreateFolder()}
+                />
+                <button className="btn primary" onClick={handleCreateFolder}>
+                  Crear
+                </button>
+                <button className="btn" onClick={() => setShowCreateFolder(false)}>
+                  Cancelar
+                </button>
+              </div>
+            )}
+
+            {!currentFolder && folders.length > 0 && (
+              <div className="folder-grid">
+                {folders.map((folder) => (
+                  <div key={folder} className="folder-card" onClick={() => enterFolder(folder)}>
+                    <span className="folder-icon">📁</span>
+                    <span className="folder-name">{folder}</span>
+                    <button
+                      className="btn danger folder-delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteFolderConfirm(folder);
+                      }}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {currentFolder ? (
+              folderFiles.length === 0 ? (
+                <p className="hint">Esta carpeta está vacía.</p>
+              ) : (
+                <ul className="file-list">
+                  {folderFiles.map((f) => (
+                    <li key={f.name}>
+                      <label className="file-row">
+                        <input
+                          type="checkbox"
+                          className="file-checkbox"
+                          checked={selectedFiles.includes(f.name)}
+                          onChange={() => toggleSelect(f.name)}
+                        />
+                        <span className="file-name">{f.name.slice(currentFolder.length + 1)}</span>
+                        <span className="muted">{new Date(f.modifiedTime).toLocaleString()}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )
+            ) : rootFiles.length === 0 && folders.length === 0 ? (
               <p className="hint">
                 No hay archivos .md en la carpeta FileSync. Crea uno y pulsa "Subir a GitHub".
               </p>
-            ) : (
+            ) : rootFiles.length > 0 ? (
               <ul className="file-list">
-                {localFiles.map((f) => (
+                {rootFiles.map((f) => (
                   <li key={f.name}>
-                    <span>{f.name}</span>
-                    <span className="file-right">
+                    <label className="file-row">
+                      <input
+                        type="checkbox"
+                        className="file-checkbox"
+                        checked={selectedFiles.includes(f.name)}
+                        onChange={() => toggleSelect(f.name)}
+                      />
+                      <span className="file-name">{f.name}</span>
                       <span className="muted">{new Date(f.modifiedTime).toLocaleString()}</span>
-                      <button className="btn danger" disabled={busy} onClick={() => setDeleteTarget(f.name)}>
-                        Eliminar
-                      </button>
-                    </span>
+                    </label>
                   </li>
                 ))}
               </ul>
+            ) : (
+              <p className="hint">No hay archivos en la raíz.</p>
+            )}
+
+            {selectedFiles.length > 0 && (
+              <div className="delete-bar">
+                <button className="btn danger" disabled={busy} onClick={() => setDeleteConfirm([...selectedFiles])}>
+                  Eliminar seleccionados ({selectedFiles.length})
+                </button>
+              </div>
             )}
           </section>
 
@@ -275,20 +480,42 @@ export default function App() {
         </>
       )}
 
-      {deleteTarget && (
+      {deleteConfirm && (
         <div className="modal-overlay">
           <div className="modal">
-            <h3>¿Eliminar archivo?</h3>
-            <p>
-              Se eliminará <code>{deleteTarget}</code> de la carpeta local y de GitHub.
-              Esta acción no se puede deshacer.
-            </p>
+            <h3>Eliminar {deleteConfirm.length} archivo{deleteConfirm.length > 1 ? "s" : ""}</h3>
+            <p>Se eliminarán de la carpeta local y de GitHub. Esta acción no se puede deshacer.</p>
+            <ul className="orphan-list">
+              {deleteConfirm.map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+            </ul>
             <div className="modal-actions">
-              <button className="btn" onClick={() => setDeleteTarget(null)} disabled={busy}>
+              <button className="btn" onClick={() => setDeleteConfirm(null)} disabled={busy}>
                 Cancelar
               </button>
               <button className="btn danger" onClick={confirmDelete} disabled={busy}>
                 Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteFolderConfirm && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3>Eliminar carpeta</h3>
+            <p>
+              Se eliminarán la carpeta <code>{deleteFolderConfirm}</code> y todos sus archivos de la carpeta
+              local y de GitHub. Esta acción no se puede deshacer.
+            </p>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setDeleteFolderConfirm(null)} disabled={busy}>
+                Cancelar
+              </button>
+              <button className="btn danger" onClick={confirmDeleteFolder} disabled={busy}>
+                Eliminar carpeta
               </button>
             </div>
           </div>

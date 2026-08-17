@@ -3,6 +3,10 @@ import { DriveClient, LocalFS, SyncLog, SyncSummary } from "./types";
 
 const MAX_REMOTE_FILES = 2000;
 
+export function isHiddenPath(name: string): boolean {
+  return name.split("/").some((seg) => seg.startsWith("."));
+}
+
 export function sync(
   client: DriveClient,
   fs: LocalFS,
@@ -13,7 +17,7 @@ export function sync(
 } {
   async function push(): Promise<SyncSummary> {
     const summary: SyncSummary = { uploaded: [], downloaded: [], conflicts: [], skipped: [] };
-    const localFiles = (await fs.list()).filter((f) => f.name.endsWith(".md"));
+    const localFiles = (await fs.list()).filter((f) => f.name.endsWith(".md") && !isHiddenPath(f.name));
     const remote = new Map((await client.listFiles()).map((f) => [f.name, f]));
 
     for (const local of localFiles) {
@@ -40,7 +44,7 @@ export function sync(
 
   async function pull(): Promise<SyncSummary> {
     const summary: SyncSummary = { uploaded: [], downloaded: [], conflicts: [], skipped: [] };
-    const remote = (await client.listFiles()).filter((f) => f.name.endsWith(".md"));
+    const remote = (await client.listFiles()).filter((f) => f.name.endsWith(".md") && !isHiddenPath(f.name));
     if (remote.length > MAX_REMOTE_FILES) {
       throw new Error(`Demasiados archivos en el repo (${remote.length}). Máximo ${MAX_REMOTE_FILES}.`);
     }
@@ -89,10 +93,10 @@ export async function findOrphans(
   direction: "push" | "pull",
 ): Promise<string[]> {
   const localNames = new Set(
-    (await fs.list()).filter((f) => f.name.endsWith(".md")).map((f) => f.name),
+    (await fs.list()).filter((f) => f.name.endsWith(".md") && !isHiddenPath(f.name)).map((f) => f.name),
   );
   const remoteNames = new Set(
-    (await client.listFiles()).filter((f) => f.name.endsWith(".md")).map((f) => f.name),
+    (await client.listFiles()).filter((f) => f.name.endsWith(".md") && !isHiddenPath(f.name)).map((f) => f.name),
   );
   if (direction === "push") {
     return [...remoteNames].filter((name) => !localNames.has(name));

@@ -100,13 +100,32 @@ export class GitHubClient {
       if (String(e?.message ?? e).includes("This repository is empty")) return [];
       throw e;
     }
-    return data
-      .filter((f) => f.type === "file" && f.name.endsWith(".md"))
-      .map((f) => ({
+    const result: DriveFileMeta[] = [];
+    const rootFiles = data.filter((f) => f.type === "file" && f.name.endsWith(".md"));
+    for (const f of rootFiles) {
+      result.push({
         id: f.name,
         name: f.name,
         modifiedTime: new Date(meta[f.name] ?? 0).toISOString(),
-      }));
+      });
+    }
+    const dirs = data.filter((d) => d.type === "dir");
+    for (const dir of dirs) {
+      const sub = await this.request<{ name: string; type: string }[]>(
+        this.repoPath(encodeURIComponent(dir.name)),
+      );
+      for (const f of sub) {
+        if (f.type === "file" && f.name.endsWith(".md")) {
+          const full = `${dir.name}/${f.name}`;
+          result.push({
+            id: full,
+            name: full,
+            modifiedTime: new Date(meta[full] ?? 0).toISOString(),
+          });
+        }
+      }
+    }
+    return result;
   }
 
   async upload(name: string, content: string, modifiedTime: number): Promise<void> {

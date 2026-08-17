@@ -116,17 +116,100 @@ body {
 }
 
 .file-list li {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   padding: 8px 0;
   border-bottom: 1px solid #232833;
 }
 
-.file-right {
+.file-row {
   display: flex;
   align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.file-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: #1a73e8;
+  cursor: pointer;
+}
+
+.file-name {
+  flex: 1;
+}
+
+.delete-bar {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.back-btn {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.folder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 12px;
+  margin-bottom: 16px;
+}
+
+.folder-card {
+  background: #232833;
+  border: 1px solid #3a4152;
+  border-radius: 8px;
+  padding: 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: background 0.15s;
+}
+
+.folder-card:hover {
+  background: #2f3542;
+}
+
+.folder-icon {
+  font-size: 28px;
+}
+
+.folder-name {
+  color: #e6e6e6;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.folder-delete {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.create-folder-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.create-folder-row .input {
+  flex: 1;
+  margin-bottom: 0;
 }
 
 .btn.danger {

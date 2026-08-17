@@ -218,6 +218,7 @@ export default function App() {
   const [newFileName, setNewFileName] = useState('');
   const [usingSaf, setUsingSaf] = useState(false);
   const [showConfirmLogout, setShowConfirmLogout] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -381,16 +382,21 @@ export default function App() {
     }
   }
 
-  async function confirmDelete(name: string) {
-    if (!config) return;
+  async function confirmDelete(names: string[]) {
+    if (!config || names.length === 0) return;
     setBusy(true);
     setError(null);
     try {
       const client = new GitHubClient(config);
-      await client.delete(name);
-      await localFs.delete(name);
+      for (const name of names) {
+        await client.delete(name);
+      }
       await client.commitMeta();
-      appendLog(`Eliminado "${name}" de local y GitHub`);
+      for (const name of names) {
+        await localFs.delete(name);
+      }
+      appendLog(`Eliminados: ${names.join(', ')}`);
+      setSelectedFiles([]);
       await refreshLocal();
     } catch (e: any) {
       setError(String(e?.message ?? e));
@@ -399,14 +405,20 @@ export default function App() {
     }
   }
 
-  function askDelete(name: string) {
+  function askDelete(names: string[]) {
     Alert.alert(
-      'Eliminar archivo',
-      `¿Eliminar "${name}" de local y GitHub? Esta acción no se puede deshacer.`,
+      'Eliminar archivos',
+      `Se eliminarán de tu teléfono y de GitHub. Esta acción no se puede deshacer:\n\n${names.map((n) => `• ${n}`).join('\n')}`,
       [
         { text: 'Cancelar', style: 'cancel' },
-        { text: 'Eliminar', style: 'destructive', onPress: () => confirmDelete(name) },
+        { text: 'Eliminar', style: 'destructive', onPress: () => confirmDelete(names) },
       ],
+    );
+  }
+
+  function toggleSelect(name: string) {
+    setSelectedFiles((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
     );
   }
 
@@ -532,21 +544,32 @@ export default function App() {
             ) : (
               localFiles.map((f) => (
                 <View key={f.name} style={styles.fileRow}>
+                  <Pressable
+                    style={styles.checkbox}
+                    onPress={() => toggleSelect(f.name)}
+                    disabled={busy}
+                  >
+                    <Text style={selectedFiles.includes(f.name) ? styles.checkboxChecked : styles.checkboxUnchecked}>
+                      {selectedFiles.includes(f.name) ? '☑' : '☐'}
+                    </Text>
+                  </Pressable>
                   <View style={styles.fileInfo}>
                     <Text style={styles.fileName}>{f.name}</Text>
                     <Text style={styles.muted}>
                       {new Date(f.modifiedTime).toLocaleString()}
                     </Text>
                   </View>
-                  <Pressable
-                    style={[styles.button, styles.dangerSmall]}
-                    onPress={() => askDelete(f.name)}
-                    disabled={busy}
-                  >
-                    <Text style={styles.buttonText}>Eliminar</Text>
-                  </Pressable>
                 </View>
               ))
+            )}
+            {selectedFiles.length > 0 && (
+              <Pressable
+                style={[styles.button, styles.danger]}
+                onPress={() => askDelete([...selectedFiles])}
+                disabled={busy}
+              >
+                <Text style={styles.buttonText}>Eliminar seleccionados ({selectedFiles.length})</Text>
+              </Pressable>
             )}
 
             {logs.length > 0 && (
@@ -675,25 +698,35 @@ const styles = StyleSheet.create({
   },
   fileRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#232833',
   },
+  checkbox: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  checkboxChecked: {
+    color: '#1a73e8',
+    fontSize: 20,
+  },
+  checkboxUnchecked: {
+    color: '#3a4152',
+    fontSize: 20,
+  },
   fileInfo: {
     flex: 1,
-    marginRight: 8,
   },
   fileName: {
     color: '#e6e6e6',
   },
-  dangerSmall: {
+  danger: {
     backgroundColor: '#c0392b',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    marginBottom: 0,
+    marginTop: 12,
   },
   muted: {
     color: '#9aa4b2',

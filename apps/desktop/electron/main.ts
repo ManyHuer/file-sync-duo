@@ -77,13 +77,25 @@ function registerIpc() {
 
   ipcMain.handle("fs:list", async () => {
     ensureSyncDir();
+    const entries = await fs.readdir(getSyncDir(), { withFileTypes: true, recursive: true });
+    return entries
+      .filter((e) => e.isFile() && e.name.endsWith(".md"))
+      .map((e) => {
+        const fullPath = path.join(e.parentPath, e.name);
+        const stat = statSync(fullPath);
+        const relPath = path.relative(getSyncDir(), fullPath).replace(/\\/g, "/");
+        return { name: relPath, modifiedTime: Math.round(stat.mtimeMs) };
+      })
+      .filter((f) => !f.name.split("/").some((seg) => seg.startsWith(".")));
+  });
+
+  ipcMain.handle("fs:listFolders", async () => {
+    ensureSyncDir();
     const entries = await fs.readdir(getSyncDir(), { withFileTypes: true });
     return entries
-      .filter((e) => e.isFile())
-      .map((e) => {
-        const stat = statSync(path.join(getSyncDir(), e.name));
-        return { name: e.name, modifiedTime: Math.round(stat.mtimeMs) };
-      });
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .map((e) => e.name)
+      .sort();
   });
 
   ipcMain.handle("fs:read", async (_e, name: string) => {
@@ -91,7 +103,9 @@ function registerIpc() {
   });
 
   ipcMain.handle("fs:write", async (_e, name: string, content: string) => {
-    await fs.writeFile(path.join(getSyncDir(), name), content, "utf8");
+    const fullPath = path.join(getSyncDir(), name);
+    await fs.mkdir(path.dirname(fullPath), { recursive: true });
+    await fs.writeFile(fullPath, content, "utf8");
   });
 
   ipcMain.handle("fs:stat", async (_e, name: string) => {
@@ -103,7 +117,20 @@ function registerIpc() {
   });
 
   ipcMain.handle("fs:delete", async (_e, name: string) => {
-    await fs.unlink(path.join(getSyncDir(), name));
+    const fullPath = path.join(getSyncDir(), name);
+    const stat = statSync(fullPath);
+    if (stat.isDirectory()) {
+      await fs.rmdir(fullPath);
+    } else {
+      await fs.unlink(fullPath);
+    }
+  });
+
+  ipcMain.handle("fs:createFolder", async (_e, name: string) => {
+    const fullPath = path.join(getSyncDir(), name);
+    if (existsSync(fullPath)) return { ok: false, error: "Ya existe una carpeta con ese nombre." };
+    await fs.mkdir(fullPath, { recursive: true });
+    return { ok: true };
   });
 }
 

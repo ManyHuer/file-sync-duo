@@ -1,5 +1,5 @@
 import { conflictName, hasConflictSuffix } from "./conflict";
-import { findOrphans } from "./sync";
+import { findOrphans, isHiddenPath } from "./sync";
 import { DriveClient, LocalFS } from "./types";
 
 function utf8ToBase64(str: string): string {
@@ -35,6 +35,12 @@ assert(!hasConflictSuffix("nota.md"), "archivo normal no es conflicto");
 assert(hasConflictSuffix(name), "copia generada debe detectarse como conflicto");
 assert(hasConflictSuffix("a_conflict_2026-08-09_14-30-00.md"), "conflicto con timestamp detectado");
 assert(hasConflictSuffix("x_conflict_2026-08-09_14-30-00.txt"), "conflicto con otra extensión detectado");
+
+assert(isHiddenPath(".git/nota.md"), "carpeta oculta detectada");
+assert(isHiddenPath(".secret.md"), "archivo oculto detectado");
+assert(isHiddenPath("carpeta/.oculto/nota.md"), "subcarpeta oculta detectada");
+assert(!isHiddenPath("carpeta/nota.md"), "path normal no es oculto");
+assert(!isHiddenPath("nota.md"), "archivo normal no es oculto");
 
 if (failed > 0) {
   console.error(`${failed} assertions fallaron`);
