@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View, ScrollView, Pressable, Alert, TextInput } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
-import { GitHubClient, sync, findOrphans } from '@filesync/core';
-import type { LocalFileMeta } from '@filesync/core';
+import { GitHubClient, sync, findOrphans, isHiddenPath } from '@filesync/core';
+import type { DriveClient, LocalFileMeta, LocalFS } from '@filesync/core';
 
 const CONFIG_KEY = 'filesync_config';
 const SAF_URI_KEY = 'filesync_saf_uri';
@@ -70,7 +70,7 @@ async function safList(): Promise<LocalFileMeta[]> {
     const index = await loadSafIndex();
     const files: LocalFileMeta[] = [];
     for (const [name, uri] of Object.entries(index)) {
-      if (!name.endsWith('.md')) continue;
+      if (!name.endsWith('.md') || isHiddenPath(name)) continue;
       try {
         await FileSystem.StorageAccessFramework.readAsStringAsync(uri);
         files.push({ name, modifiedTime: meta[name] ?? 0 });
@@ -78,25 +78,61 @@ async function safList(): Promise<LocalFileMeta[]> {
         delete index[name];
       }
     }
-    const uris = await FileSystem.StorageAccessFramework.readDirectoryAsync(storage.safUri);
-    for (const uri of uris) {
-      const name = nameFromSafUri(uri);
-      if (!name.endsWith('.md') || index[name]) continue;
-      files.push({ name, modifiedTime: meta[name] ?? 0 });
-      index[name] = uri;
-    }
     await saveSafIndex(index);
     return files;
   }
   const names = await FileSystem.readDirectoryAsync(SANDBOX_DIR);
   const files: LocalFileMeta[] = [];
   for (const name of names) {
+    if (isHiddenPath(name)) continue;
     const info = await FileSystem.getInfoAsync(`${SANDBOX_DIR}${name}`);
     if (info.exists && !info.isDirectory) {
       files.push({ name, modifiedTime: info.modificationTime ? Math.round(info.modificationTime * 1000) : 0 });
+    } else if (info.exists && info.isDirectory) {
+      const subNames = await FileSystem.readDirectoryAsync(`${SANDBOX_DIR}${name}`);
+      for (const sub of subNames) {
+        const full = `${name}/${sub}`;
+        if (!full.endsWith('.md') || isHiddenPath(full)) continue;
+        const subInfo = await FileSystem.getInfoAsync(`${SANDBOX_DIR}${full}`);
+        if (subInfo.exists && !subInfo.isDirectory) {
+          files.push({ name: full, modifiedTime: subInfo.modificationTime ? Math.round(subInfo.modificationTime * 1000) : 0 });
+        }
+      }
     }
   }
   return files;
+}
+
+async function safListFolders(): Promise<string[]> {
+  await safEnsureDir();
+  if (storage.safUri) {
+    const uris = await FileSystem.StorageAccessFramework.readDirectoryAsync(storage.safUri);
+    const folders: string[] = [];
+    for (const uri of uris) {
+      const name = nameFromSafUri(uri);
+      if (name.startsWith('.')) continue;
+      try {
+        await FileSystem.StorageAccessFramework.readDirectoryAsync(uri);
+        folders.push(name);
+      } catch {
+        // no es directorio, ignorar
+      }
+    }
+    return folders.sort();
+  }
+  const names = await FileSystem.readDirectoryAsync(SANDBOX_DIR);
+  return names
+    .filter((n) => !n.startsWith('.'))
+    .sort();
+}
+
+async function safCreateFolder(name: string): Promise<void> {
+  await safEnsureDir();
+  if (storage.safUri) {
+    await FileSystem.StorageAccessFramework.makeDirectoryAsync(storage.safUri, name);
+  } else {
+    await FileSystem.makeDirectoryAsync(`${SANDBOX_DIR}${name}`, { intermediates: true });
+  }
 }
 
 async function safRead(name: string): Promise<string> {
@@ -136,19 +172,46 @@ async function safWrite(name: string, content: string): Promise<void> {
         delete index[name];
       }
     }
-    const uris = await FileSystem.StorageAccessFramework.readDirectoryAsync(storage.safUri);
-    const target = uris.find((uri) => nameFromSafUri(uri) === name);
+    const slash = name.indexOf('/');
+    let baseUri = storage.safUri;
+    let base = name;
+    if (slash > 0) {
+      const folderName = name.slice(0, slash);
+      base = name.slice(slash + 1);
+      const uris = await FileSystem.StorageAccessFramework.readDirectoryAsync(storage.safUri);
+      let folderUri: string | null = null;
+      for (const uri of uris) {
+        if (nameFromSafUri(uri) === folderName) {
+          try {
+            await FileSystem.StorageAccessFramework.readDirectoryAsync(uri);
+            folderUri = uri;
+          } catch {
+            // no es directorio, seguir buscando
+          }
+        }
+      }
+      if (!folderUri) {
+        folderUri = await FileSystem.StorageAccessFramework.makeDirectoryAsync(storage.safUri, folderName);
+      }
+      baseUri = folderUri;
+    }
+    const subUris = await FileSystem.StorageAccessFramework.readDirectoryAsync(baseUri);
+    const target = subUris.find((uri) => nameFromSafUri(uri) === base);
     if (target) {
       await FileSystem.StorageAccessFramework.writeAsStringAsync(target, content);
       index[name] = target;
     } else {
-      const base = name.replace(/\.md$/, '');
-      const uri = await FileSystem.StorageAccessFramework.createFileAsync(storage.safUri, base, 'text/markdown');
+      const fileBase = base.replace(/\.md$/, '');
+      const uri = await FileSystem.StorageAccessFramework.createFileAsync(baseUri, fileBase, 'text/markdown');
       await FileSystem.StorageAccessFramework.writeAsStringAsync(uri, content);
       index[name] = uri;
     }
     await saveSafIndex(index);
   } else {
+    const slash = name.indexOf('/');
+    if (slash > 0) {
+      await FileSystem.makeDirectoryAsync(`${SANDBOX_DIR}${name.slice(0, slash)}`, { intermediates: true });
+    }
     await FileSystem.writeAsStringAsync(`${SANDBOX_DIR}${name}`, content);
   }
   meta[name] = Date.now();
@@ -197,7 +260,7 @@ async function safDelete(name: string): Promise<void> {
   await saveLocalMeta(meta);
 }
 
-const localFs = {
+const localFs: LocalFS = {
   list: safList,
   read: safRead,
   write: safWrite,
@@ -212,10 +275,14 @@ export default function App() {
   const [repo, setRepo] = useState('');
   const [token, setToken] = useState('');
   const [localFiles, setLocalFiles] = useState<LocalFileMeta[]>([]);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [newFileName, setNewFileName] = useState('');
+  const [newFolderName, setNewFolderName] = useState('');
+  const [showCreateFolder, setShowCreateFolder] = useState(false);
   const [usingSaf, setUsingSaf] = useState(false);
   const [showConfirmLogout, setShowConfirmLogout] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
@@ -245,10 +312,44 @@ export default function App() {
     await safEnsureDir();
     const files = await localFs.list();
     setLocalFiles(files.filter((f) => f.name.endsWith('.md')));
+    const folderList = await safListFolders();
+    setFolders(folderList);
   }
 
   function appendLog(msg: string) {
     setLogs((prev) => [...prev, msg]);
+  }
+
+  function makeScopedClient(client: GitHubClient): DriveClient {
+    if (!currentFolder) return client;
+    const prefix = currentFolder + '/';
+    return {
+      listFiles: async () => {
+        const all = await client.listFiles();
+        return all.filter((f) => f.name.startsWith(prefix));
+      },
+      upload: client.upload.bind(client),
+      download: client.download.bind(client),
+      touch: client.touch.bind(client),
+      delete: client.delete.bind(client),
+      commitMeta: client.commitMeta.bind(client),
+    };
+  }
+
+  function makeScopedLocalFs(): LocalFS {
+    if (!currentFolder) return localFs;
+    const prefix = currentFolder + '/';
+    return {
+      list: async () => {
+        const all = await localFs.list();
+        return all.filter((f) => f.name.startsWith(prefix));
+      },
+      read: localFs.read,
+      write: localFs.write,
+      stat: localFs.stat,
+      setMtime: localFs.setMtime,
+      delete: localFs.delete,
+    };
   }
 
   async function handleSaveConfig() {
@@ -299,7 +400,9 @@ export default function App() {
     setLogs([]);
     try {
       const client = new GitHubClient(config);
-      const orphans = await findOrphans(client, localFs, direction);
+      const scopedClient = makeScopedClient(client);
+      const scopedFs = makeScopedLocalFs();
+      const orphans = await findOrphans(scopedClient, scopedFs, direction);
       if (orphans.length > 0) {
         setBusy(false);
         Alert.alert(
@@ -308,13 +411,13 @@ export default function App() {
             ? `Estos archivos existen en GitHub pero no en tu teléfono. Se eliminarán de GitHub:\n\n${orphans.join('\n')}`
             : `Estos archivos existen en tu teléfono pero no en GitHub. Se eliminarán de tu teléfono:\n\n${orphans.join('\n')}`,
           [
-            { text: 'No, solo sincronizar', style: 'cancel', onPress: () => doSync(client, direction) },
-            { text: 'Sí, eliminar', style: 'destructive', onPress: () => confirmOrphans(client, direction, orphans) },
+            { text: 'No, solo sincronizar', style: 'cancel', onPress: () => doSync(scopedClient, scopedFs, direction) },
+            { text: 'Sí, eliminar', style: 'destructive', onPress: () => confirmOrphans(scopedClient, scopedFs, direction, orphans) },
           ],
         );
         return;
       }
-      await doSync(client, direction);
+      await doSync(scopedClient, scopedFs, direction);
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       if (msg.includes('TOKEN')) {
@@ -327,11 +430,11 @@ export default function App() {
     }
   }
 
-  async function doSync(client: GitHubClient, direction: 'push' | 'pull') {
+  async function doSync(client: DriveClient, fs: LocalFS, direction: 'push' | 'pull') {
     setBusy(true);
     setError(null);
     try {
-      const s = sync(client, localFs, { onLog: appendLog });
+      const s = sync(client, fs, { onLog: appendLog });
       const summary = direction === 'push' ? await s.push() : await s.pull();
       appendLog(`--- Resumen: subidos ${summary.uploaded.length}, descargados ${summary.downloaded.length}, conflictos ${summary.conflicts.length}, sin cambios ${summary.skipped.length}`);
       await refreshLocal();
@@ -347,7 +450,7 @@ export default function App() {
     }
   }
 
-  async function confirmOrphans(client: GitHubClient, direction: 'push' | 'pull', files: string[]) {
+  async function confirmOrphans(client: DriveClient, fs: LocalFS, direction: 'push' | 'pull', files: string[]) {
     setBusy(true);
     setError(null);
     try {
@@ -356,12 +459,12 @@ export default function App() {
           await client.delete(name);
           appendLog(`Eliminado de GitHub: "${name}"`);
         } else {
-          await localFs.delete(name);
+          await fs.delete(name);
           appendLog(`Eliminado local: "${name}"`);
         }
       }
       if (direction === 'push') await client.commitMeta();
-      await doSync(client, direction);
+      await doSync(client, fs, direction);
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -372,7 +475,8 @@ export default function App() {
   async function createFile() {
     const name = newFileName.trim();
     if (!name) return;
-    const fname = name.endsWith('.md') ? name : `${name}.md`;
+    const base = name.endsWith('.md') ? name : `${name}.md`;
+    const fname = currentFolder ? `${currentFolder}/${base}` : base;
     try {
       await safWrite(fname, `# ${name}\n\nEscribe tu nota aquí...\n`);
       setNewFileName('');
@@ -380,6 +484,58 @@ export default function App() {
     } catch (e: any) {
       setError(String(e?.message ?? e));
     }
+  }
+
+  async function handleCreateFolder() {
+    const name = newFolderName.trim();
+    if (!name) return;
+    if (name.startsWith('.')) {
+      setError('El nombre de la carpeta no puede empezar con un punto.');
+      return;
+    }
+    setError(null);
+    try {
+      await safCreateFolder(name);
+      setNewFolderName('');
+      setShowCreateFolder(false);
+      await refreshLocal();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }
+
+  async function confirmDeleteFolder(folder: string) {
+    if (!config) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const client = new GitHubClient(config);
+      const filesInFolder = localFiles.filter((f) => f.name.startsWith(folder + '/'));
+      for (const f of filesInFolder) {
+        await client.delete(f.name);
+      }
+      await client.commitMeta();
+      for (const f of filesInFolder) {
+        await localFs.delete(f.name);
+      }
+      await localFs.delete(folder);
+      appendLog(`Carpeta "${folder}" eliminada`);
+      await refreshLocal();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function enterFolder(folder: string) {
+    setCurrentFolder(folder);
+    setSelectedFiles([]);
+  }
+
+  function goToRoot() {
+    setCurrentFolder(null);
+    setSelectedFiles([]);
   }
 
   async function confirmDelete(names: string[]) {
@@ -421,6 +577,22 @@ export default function App() {
       prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
     );
   }
+
+  function askDeleteFolder(folder: string) {
+    Alert.alert(
+      'Eliminar carpeta',
+      `Se eliminarán la carpeta "${folder}" y todos sus archivos de tu teléfono y de GitHub. Esta acción no se puede deshacer.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Eliminar', style: 'destructive', onPress: () => confirmDeleteFolder(folder) },
+      ],
+    );
+  }
+
+  const rootFiles = localFiles.filter((f) => !f.name.includes('/'));
+  const folderFiles = currentFolder
+    ? localFiles.filter((f) => f.name.startsWith(currentFolder + '/'))
+    : [];
 
   return (
     <View style={styles.container}>
@@ -538,11 +710,87 @@ export default function App() {
               </Text>
             )}
 
+            <View style={styles.folderRow}>
+              <Text style={styles.sectionTitle}>
+                {currentFolder ? `📁 ${currentFolder}` : 'Carpetas'}
+              </Text>
+              {currentFolder ? (
+                <Pressable style={[styles.button, styles.ghostSmall]} onPress={goToRoot}>
+                  <Text style={styles.buttonText}>← Volver</Text>
+                </Pressable>
+              ) : (
+                <Pressable style={[styles.button, styles.primarySmall]} onPress={() => setShowCreateFolder(true)}>
+                  <Text style={styles.buttonText}>+ Nueva carpeta</Text>
+                </Pressable>
+              )}
+            </View>
+
+            {showCreateFolder && (
+              <View style={styles.createRow}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Nombre de la carpeta"
+                  placeholderTextColor="#777"
+                  value={newFolderName}
+                  onChangeText={setNewFolderName}
+                  onSubmitEditing={handleCreateFolder}
+                />
+                <Pressable style={[styles.button, styles.primary]} onPress={handleCreateFolder}>
+                  <Text style={styles.buttonText}>Crear</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {!currentFolder && folders.length > 0 && (
+              <View style={styles.folderGrid}>
+                {folders.map((folder) => (
+                  <Pressable
+                    key={folder}
+                    style={styles.folderCard}
+                    onPress={() => enterFolder(folder)}
+                  >
+                    <Text style={styles.folderIcon}>📁</Text>
+                    <Text style={styles.folderName}>{folder}</Text>
+                    <Pressable
+                      style={[styles.button, styles.dangerSmall]}
+                      onPress={() => askDeleteFolder(folder)}
+                    >
+                      <Text style={styles.buttonText}>Eliminar</Text>
+                    </Pressable>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
             <Text style={styles.sectionTitle}>Archivos locales (.md)</Text>
-            {localFiles.length === 0 ? (
+            {currentFolder ? (
+              folderFiles.length === 0 ? (
+                <Text style={styles.muted}>Esta carpeta está vacía.</Text>
+              ) : (
+                folderFiles.map((f) => (
+                  <View key={f.name} style={styles.fileRow}>
+                    <Pressable
+                      style={styles.checkbox}
+                      onPress={() => toggleSelect(f.name)}
+                      disabled={busy}
+                    >
+                      <Text style={selectedFiles.includes(f.name) ? styles.checkboxChecked : styles.checkboxUnchecked}>
+                        {selectedFiles.includes(f.name) ? '☑' : '☐'}
+                      </Text>
+                    </Pressable>
+                    <View style={styles.fileInfo}>
+                      <Text style={styles.fileName}>{f.name.slice(currentFolder.length + 1)}</Text>
+                      <Text style={styles.muted}>
+                        {new Date(f.modifiedTime).toLocaleString()}
+                      </Text>
+                    </View>
+                  </View>
+                ))
+              )
+            ) : localFiles.length === 0 && folders.length === 0 ? (
               <Text style={styles.muted}>No hay archivos .md. Crea uno con el botón "Crear".</Text>
-            ) : (
-              localFiles.map((f) => (
+            ) : rootFiles.length > 0 ? (
+              rootFiles.map((f) => (
                 <View key={f.name} style={styles.fileRow}>
                   <Pressable
                     style={styles.checkbox}
@@ -561,6 +809,8 @@ export default function App() {
                   </View>
                 </View>
               ))
+            ) : (
+              <Text style={styles.muted}>No hay archivos en la raíz.</Text>
             )}
             {selectedFiles.length > 0 && (
               <Pressable
@@ -727,6 +977,38 @@ const styles = StyleSheet.create({
   danger: {
     backgroundColor: '#c0392b',
     marginTop: 12,
+  },
+  dangerSmall: {
+    backgroundColor: '#c0392b',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    marginBottom: 0,
+    marginTop: 4,
+  },
+  folderGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 12,
+  },
+  folderCard: {
+    backgroundColor: '#232833',
+    borderColor: '#3a4152',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    width: '46%',
+    alignItems: 'center',
+    gap: 6,
+  },
+  folderIcon: {
+    fontSize: 28,
+  },
+  folderName: {
+    color: '#e6e6e6',
+    fontWeight: '600',
+    textAlign: 'center',
   },
   muted: {
     color: '#9aa4b2',
