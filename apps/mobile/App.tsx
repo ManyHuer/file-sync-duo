@@ -710,15 +710,24 @@ export default function App() {
             {showCreateFolder && (
               <View style={styles.createRow}>
                 <TextInput
-                  style={styles.input}
+                  style={styles.createInput}
                   placeholder="Nombre de la carpeta"
                   placeholderTextColor="#777"
                   value={newFolderName}
                   onChangeText={setNewFolderName}
                   onSubmitEditing={handleCreateFolder}
                 />
-                <Pressable style={[styles.button, styles.primary]} onPress={handleCreateFolder}>
+                <Pressable style={[styles.button, styles.primary, styles.createBtn]} onPress={handleCreateFolder}>
                   <Text style={styles.buttonText}>Crear</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.button, styles.ghost, styles.createBtn]}
+                  onPress={() => {
+                    setShowCreateFolder(false);
+                    setNewFolderName('');
+                  }}
+                >
+                  <Text style={styles.buttonText}>Cancelar</Text>
                 </Pressable>
               </View>
             )}
@@ -907,6 +916,23 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 14,
     alignItems: 'center',
+  },
+  createInput: {
+    flex: 1,
+    backgroundColor: '#141824',
+    borderColor: '#2c3342',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    color: '#f2f4f8',
+    fontSize: 13,
+  },
+  createBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 0,
   },
   folderRow: {
     flexDirection: 'row',
