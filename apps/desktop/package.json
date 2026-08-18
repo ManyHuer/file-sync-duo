@@ -9,7 +9,8 @@
     "dev:main": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "build:main": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --external:electron --format=cjs --outdir=dist-electron",
     "typecheck": "tsc --noEmit",
-    "build": "vite build && pnpm build:main"
+    "build": "vite build && pnpm build:main",
+    "dist": "pnpm build && electron-builder"
   },
   "dependencies": {
     "@filesync/core": "workspace:*",
@@ -24,6 +25,7 @@
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "^31.3.0",
+    "electron-builder": "^24.13.3",
     "esbuild": "^0.23.0",
     "typescript": "^5.5.4",
     "vite": "^5.4.0",

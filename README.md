@@ -73,3 +73,17 @@ Si el mismo archivo se modificó en ambos lados (teléfono y PC) desde la últim
 | `pnpm core:check` | Ejecuta el autochequeo de la lógica de conflictos |
 | `pnpm --filter desktop typecheck` | Typecheck del escritorio |
 | `pnpm --filter mobile typecheck` | Typecheck del móvil |
+
+## Publicar una versión (instaladores)
+
+Al crear un **tag** `vX.Y.Z` (ej. `v1.0.0`) y subirlo a GitHub, un workflow compila automáticamente:
+
+- **Escritorio**: instalador NSIS `FileSync Setup X.Y.Z.exe` (Windows x64)
+- **Móvil**: APK de Android (firmado con el keystore de debug, solo para uso personal)
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Los archivos quedan adjuntos en **GitHub → Releases** del repositorio. Para instalar el APK en tu teléfono, habilita "instalar apps de orígenes desconocidos".
