@@ -284,7 +284,6 @@ export default function App() {
   const [newFolderName, setNewFolderName] = useState('');
   const [showCreateFolder, setShowCreateFolder] = useState(false);
   const [usingSaf, setUsingSaf] = useState(false);
-  const [showConfirmLogout, setShowConfirmLogout] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
 
   useEffect(() => {
@@ -367,7 +366,6 @@ export default function App() {
   async function handleLogout() {
     await SecureStore.deleteItemAsync(CONFIG_KEY);
     setConfig(null);
-    setShowConfirmLogout(false);
   }
 
   async function handlePickFolder() {
@@ -639,39 +637,23 @@ export default function App() {
             </Text>
             <View style={styles.row}>
               <Pressable
-                style={[styles.button, styles.primary]}
+                style={[styles.button, styles.primary, styles.rowBtn]}
                 onPress={() => runSync('push')}
                 disabled={busy}
               >
                 <Text style={styles.buttonText}>Subir a GitHub</Text>
               </Pressable>
               <Pressable
-                style={[styles.button, styles.primary]}
+                style={[styles.button, styles.primary, styles.rowBtn]}
                 onPress={() => runSync('pull')}
                 disabled={busy}
               >
                 <Text style={styles.buttonText}>Descargar</Text>
               </Pressable>
-              <Pressable style={[styles.button, styles.ghost]} onPress={() => setShowConfirmLogout(true)}>
-                <Text style={styles.buttonText}>Cambiar</Text>
+              <Pressable style={[styles.button, styles.dangerBtn, styles.rowBtn]} onPress={handleLogout}>
+                <Text style={styles.buttonText}>Desconectar</Text>
               </Pressable>
             </View>
-
-            {showConfirmLogout && (
-              <View style={styles.confirmBox}>
-                <Text style={styles.confirmText}>
-                  ¿Seguro que quieres cerrar la sesión? Podrás volver a configurar la conexión.
-                </Text>
-                <View style={styles.row}>
-                  <Pressable style={[styles.button, styles.primarySmall]} onPress={handleLogout}>
-                    <Text style={styles.buttonText}>Sí, cerrar sesión</Text>
-                  </Pressable>
-                  <Pressable style={[styles.button, styles.ghostSmall]} onPress={() => setShowConfirmLogout(false)}>
-                    <Text style={styles.buttonText}>No, regresar</Text>
-                  </Pressable>
-                </View>
-              </View>
-            )}
 
             {error && <Text style={styles.error}>{error}</Text>}
 
@@ -880,6 +862,15 @@ const styles = StyleSheet.create({
   primary: {
     backgroundColor: '#1a73e8',
   },
+  dangerBtn: {
+    backgroundColor: '#c0392b',
+  },
+  rowBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    marginBottom: 0,
+  },
   ghost: {
     backgroundColor: 'transparent',
     borderWidth: 1,
@@ -923,20 +914,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 8,
     marginBottom: 6,
-  },
-  confirmBox: {
-    backgroundColor: '#1a1e28',
-    borderColor: '#3a4152',
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 14,
-  },
-  confirmText: {
-    color: '#e6e6e6',
-    fontSize: 14,
-    marginBottom: 12,
-    lineHeight: 20,
   },
   folderText: {
     flex: 1,

@@ -27,9 +27,9 @@ function loadConfig(): AppConfig | null {
   return null;
 }
 
-function saveConfig(cfg: AppConfig) {
+async function saveConfig(cfg: AppConfig) {
   mkdirSync(DEFAULT_SYNC_DIR, { recursive: true });
-  fs.writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  await fs.writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2));
 }
 
 function getSyncDir(): string {
@@ -49,13 +49,19 @@ function registerIpc() {
     return cfg ? { owner: cfg.owner, repo: cfg.repo, hasToken: true, syncDir: cfg.syncDir ?? DEFAULT_SYNC_DIR } : null;
   });
 
-  ipcMain.handle("config:save", (_e, cfg: AppConfig) => {
+  ipcMain.handle("config:save", async (_e, cfg: AppConfig) => {
     config = cfg;
-    saveConfig(cfg);
+    await saveConfig(cfg);
     return { ok: true };
   });
 
   ipcMain.handle("config:getToken", () => loadConfig()?.token ?? null);
+
+  ipcMain.handle("config:clear", async () => {
+    config = null;
+    if (existsSync(CONFIG_PATH)) await fs.unlink(CONFIG_PATH);
+    return { ok: true };
+  });
 
   ipcMain.handle("fs:chooseDir", async () => {
     const result = await dialog.showOpenDialog({
@@ -69,7 +75,7 @@ function registerIpc() {
     const syncDir = result.filePaths[0];
     if (config) {
       config.syncDir = syncDir;
-      saveConfig(config);
+      await saveConfig(config);
     }
     mkdirSync(syncDir, { recursive: true });
     return { canceled: false, syncDir };

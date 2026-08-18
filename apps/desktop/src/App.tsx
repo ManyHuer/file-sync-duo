@@ -9,6 +9,7 @@ declare global {
       getConfig: () => Promise<{ owner: string; repo: string; hasToken: boolean; syncDir: string } | null>;
       saveConfig: (config: { owner: string; repo: string; token: string; syncDir?: string }) => Promise<{ ok: boolean }>;
       getToken: () => Promise<string | null>;
+      clearConfig: () => Promise<{ ok: boolean }>;
       chooseDir: () => Promise<{ canceled: boolean; syncDir?: string }>;
       listFiles: () => Promise<{ name: string; modifiedTime: number }[]>;
       listFolders: () => Promise<string[]>;
@@ -81,6 +82,13 @@ export default function App() {
     setConfig(updated);
     if (updated) setSyncDir(updated.syncDir);
     setToken("");
+  }
+
+  async function handleDisconnect() {
+    await window.fileSync.clearConfig();
+    setConfig(null);
+    setToken("");
+    setError(null);
   }
 
   async function handleChooseDir() {
@@ -294,38 +302,47 @@ export default function App() {
       </header>
 
       <section className="card">
-        <h2>Conexión GitHub</h2>
+        <div className="card-header">
+          <h2>Conexión GitHub</h2>
+          {config && (
+            <button className="btn danger" onClick={handleDisconnect}>
+              Desconectar
+            </button>
+          )}
+        </div>
         {config ? (
           <p className="hint">
             Conectado a <code>{config.owner}/{config.repo}</code>
           </p>
         ) : (
-          <p className="hint">Configura tu repo de GitHub para sincronizar archivos .md.</p>
+          <>
+            <p className="hint">Configura tu repo de GitHub para sincronizar archivos .md.</p>
+            <div className="form">
+              <input
+                className="input"
+                placeholder="Owner (usuario de GitHub)"
+                value={owner}
+                onChange={(e) => setOwner(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Repo (nombre del repositorio)"
+                value={repo}
+                onChange={(e) => setRepo(e.target.value)}
+              />
+              <input
+                className="input"
+                type="password"
+                placeholder="Personal Access Token"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+              />
+              <button className="btn primary" onClick={handleSaveConfig}>
+                Guardar conexión
+              </button>
+            </div>
+          </>
         )}
-        <div className="form">
-          <input
-            className="input"
-            placeholder="Owner (usuario de GitHub)"
-            value={owner}
-            onChange={(e) => setOwner(e.target.value)}
-          />
-          <input
-            className="input"
-            placeholder="Repo (nombre del repositorio)"
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-          />
-          <input
-            className="input"
-            type="password"
-            placeholder="Personal Access Token"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-          />
-          <button className="btn primary" onClick={handleSaveConfig}>
-            Guardar conexión
-          </button>
-        </div>
         {error && <p className="error">{error}</p>}
       </section>
 

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("fileSync", {
   saveConfig: (config: { owner: string; repo: string; token: string; syncDir?: string }) =>
     ipcRenderer.invoke("config:save", config),
   getToken: () => ipcRenderer.invoke("config:getToken"),
+  clearConfig: () => ipcRenderer.invoke("config:clear"),
   chooseDir: () => ipcRenderer.invoke("fs:chooseDir"),
   listFiles: () => ipcRenderer.invoke("fs:list"),
   listFolders: () => ipcRenderer.invoke("fs:listFolders"),
