@@ -26,8 +26,15 @@ jobs:
           java-version: 17
       - uses: android-actions/setup-android@v3
       - run: pnpm install --frozen-lockfile
-      - run: cd apps/mobile && npx expo prebuild --platform android
-      - run: cd apps/mobile/android && ./gradlew assembleRelease
+      - run: cd apps/mobile && npx expo prebuild --clean --platform android
+      - run: cd apps/mobile/android && ./gradlew assembleRelease --no-daemon
+      - name: Verify release APK exists
+        run: ls apps/mobile/android/app/build/outputs/apk/release/
+      - name: Rename APK with release version
+        run: |
+          cd apps/mobile/android/app/build/outputs/apk/release
+          apk=$(ls app-release*.apk | head -n1)
+          mv "$apk" "FileSync-${{ github.ref_name }}.apk"
       - uses: softprops/action-gh-release@v2
         with:
           files: apps/mobile/android/app/build/outputs/apk/release/*.apk
