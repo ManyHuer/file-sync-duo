@@ -23,6 +23,7 @@ export function sync(
     for (const local of localFiles) {
       const remoteFile = remote.get(local.name);
       const remoteTime = remoteFile ? Date.parse(remoteFile.modifiedTime) : 0;
+      log.onLog?.(`[debug] push "${local.name}": local=${local.modifiedTime} remote=${remoteTime} existe=${!!remoteFile}`);
 
       if (remoteFile && remoteTime > local.modifiedTime) {
         const copyName = conflictName(local.name);
@@ -30,8 +31,16 @@ export function sync(
         await client.upload(copyName, await fs.read(local.name), local.modifiedTime);
         summary.conflicts.push(local.name);
       } else if (remoteFile && remoteTime === local.modifiedTime) {
-        log.onLog?.(`"${local.name}" ya está sincronizado`);
-        summary.skipped.push(local.name);
+        const localContent = await fs.read(local.name);
+        const remoteContent = await client.download(remoteFile.id);
+        if (localContent === remoteContent) {
+          log.onLog?.(`"${local.name}" ya está sincronizado`);
+          summary.skipped.push(local.name);
+        } else {
+          log.onLog?.(`"${local.name}" cambió (contenido distinto). Subiendo...`);
+          await client.upload(local.name, localContent, local.modifiedTime);
+          summary.uploaded.push(local.name);
+        }
       } else {
         log.onLog?.(`Subiendo "${local.name}"...`);
         await client.upload(local.name, await fs.read(local.name), local.modifiedTime);
@@ -53,6 +62,7 @@ export function sync(
     for (const file of remote) {
       const localTime = local.get(file.name) ?? 0;
       const remoteTime = Date.parse(file.modifiedTime);
+      log.onLog?.(`[debug] pull "${file.name}": local=${localTime} remote=${remoteTime}`);
 
       if (localTime > remoteTime) {
         const copyName = conflictName(file.name);
@@ -60,8 +70,17 @@ export function sync(
         await client.upload(copyName, await fs.read(file.name), localTime);
         summary.conflicts.push(file.name);
       } else if (localTime === remoteTime && localTime > 0) {
-        log.onLog?.(`"${file.name}" ya está sincronizado`);
-        summary.skipped.push(file.name);
+        const localContent = await fs.read(file.name);
+        const remoteContent = await client.download(file.id);
+        if (localContent === remoteContent) {
+          log.onLog?.(`"${file.name}" ya está sincronizado`);
+          summary.skipped.push(file.name);
+        } else {
+          const copyName = conflictName(file.name);
+          log.onLog?.(`"${file.name}" cambió (contenido distinto). Copia en repo: "${copyName}"`);
+          await client.upload(copyName, localContent, localTime);
+          summary.conflicts.push(file.name);
+        }
       } else {
         log.onLog?.(`Descargando "${file.name}"...`);
         try {

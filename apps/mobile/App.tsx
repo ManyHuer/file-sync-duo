@@ -69,17 +69,41 @@ async function safList(): Promise<LocalFileMeta[]> {
   if (storage.safUri) {
     const index = await loadSafIndex();
     const files: LocalFileMeta[] = [];
-    for (const [name, uri] of Object.entries(index)) {
-      if (!name.endsWith('.md') || isHiddenPath(name)) continue;
-      try {
-        await FileSystem.StorageAccessFramework.readAsStringAsync(uri);
-        const info = await FileSystem.getInfoAsync(uri);
+    const seen = new Set<string>();
+    const scanDir = async (uri: string, prefix: string) => {
+      const uris = await FileSystem.StorageAccessFramework.readDirectoryAsync(uri);
+      for (const itemUri of uris) {
+        const baseName = nameFromSafUri(itemUri);
+        if (baseName.startsWith('.')) continue;
+        const name = prefix ? `${prefix}/${baseName}` : baseName;
+        let isDir = false;
+        try {
+          await FileSystem.StorageAccessFramework.readDirectoryAsync(itemUri);
+          isDir = true;
+        } catch {
+          // no es directorio
+        }
+        if (isDir) {
+          if (!prefix) await scanDir(itemUri, baseName);
+          continue;
+        }
+        if (!name.endsWith('.md') || isHiddenPath(name)) continue;
+        seen.add(name);
+        index[name] = itemUri;
+        const info = await FileSystem.getInfoAsync(itemUri);
+        console.log(`[debug] getInfoAsync(${name}) =>`, JSON.stringify(info));
         const mtime = info.exists && info.modificationTime ? Math.round(info.modificationTime * 1000) : (meta[name] ?? 0);
         meta[name] = mtime;
         files.push({ name, modifiedTime: mtime });
-      } catch {
-        delete index[name];
       }
+    };
+    try {
+      await scanDir(storage.safUri, '');
+    } catch (e: any) {
+      throw new Error(`No se pudo leer la carpeta elegida: ${String(e?.message ?? e)}`);
+    }
+    for (const name of Object.keys(index)) {
+      if (!seen.has(name)) delete index[name];
     }
     await saveSafIndex(index);
     await saveLocalMeta(meta);
@@ -400,11 +424,14 @@ export default function App() {
     setBusy(true);
     setError(null);
     setLogs([]);
+    appendLog(`[debug] runSync(${direction}) iniciado`);
     try {
       const client = new GitHubClient(config);
       const scopedClient = makeScopedClient(client);
       const scopedFs = makeScopedLocalFs();
+      appendLog('[debug] llamando findOrphans...');
       const orphans = await findOrphans(scopedClient, scopedFs, direction);
+      appendLog(`[debug] findOrphans terminó: ${orphans.length} huérfanos`);
       if (orphans.length > 0) {
         setBusy(false);
         Alert.alert(
@@ -435,11 +462,16 @@ export default function App() {
   async function doSync(client: DriveClient, fs: LocalFS, direction: 'push' | 'pull') {
     setBusy(true);
     setError(null);
+    appendLog(`[debug] doSync(${direction}) iniciado`);
     try {
       const s = sync(client, fs, { onLog: appendLog });
+      appendLog(`[debug] ejecutando s.${direction}()...`);
       const summary = direction === 'push' ? await s.push() : await s.pull();
+      appendLog(`[debug] s.${direction}() terminó`);
       appendLog(`--- Resumen: subidos ${summary.uploaded.length}, descargados ${summary.downloaded.length}, conflictos ${summary.conflicts.length}, sin cambios ${summary.skipped.length}`);
+      appendLog('[debug] llamando refreshLocal...');
       await refreshLocal();
+      appendLog('[debug] refreshLocal terminó');
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       if (msg.includes('TOKEN')) {

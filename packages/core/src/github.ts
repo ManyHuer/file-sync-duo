@@ -1,6 +1,7 @@
 ﻿import { DriveFileMeta } from "./types";
 
 const META_FILE = ".filesync-meta.json";
+const REQUEST_TIMEOUT_MS = 20000;
 
 function utf8ToBase64(str: string): string {
   const bytes = new TextEncoder().encode(str);
@@ -33,15 +34,28 @@ export class GitHubClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`https://api.github.com${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${this.config.token}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        ...init?.headers,
-      },
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(`https://api.github.com${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${this.config.token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          ...init?.headers,
+        },
+      });
+    } catch (e: any) {
+      if (e?.name === "AbortError") {
+        throw new Error(`GitHub API timeout (${REQUEST_TIMEOUT_MS}ms): ${path}`);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
     if (res.status === 401) {
       throw new Error("TOKEN_EXPIRED");
     }
