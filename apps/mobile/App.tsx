@@ -73,12 +73,16 @@ async function safList(): Promise<LocalFileMeta[]> {
       if (!name.endsWith('.md') || isHiddenPath(name)) continue;
       try {
         await FileSystem.StorageAccessFramework.readAsStringAsync(uri);
-        files.push({ name, modifiedTime: meta[name] ?? 0 });
+        const info = await FileSystem.getInfoAsync(uri);
+        const mtime = info.exists && info.modificationTime ? Math.round(info.modificationTime * 1000) : (meta[name] ?? 0);
+        meta[name] = mtime;
+        files.push({ name, modifiedTime: mtime });
       } catch {
         delete index[name];
       }
     }
     await saveSafIndex(index);
+    await saveLocalMeta(meta);
     return files;
   }
   const names = await FileSystem.readDirectoryAsync(SANDBOX_DIR);
