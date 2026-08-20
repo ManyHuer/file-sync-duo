@@ -29,3 +29,6 @@ Thumbs.db
 
 # Herramientas locales
 .claude/
+
+# Notas del agente (local)
+AGENTS.md
