@@ -1,5 +1,5 @@
 import { conflictName, hasConflictSuffix } from "./conflict";
-import { findOrphans, isHiddenPath } from "./sync";
+import { findOrphans, isHiddenPath, sync } from "./sync";
 import { DriveClient, LocalFS } from "./types";
 
 function utf8ToBase64(str: string): string {
@@ -82,4 +82,79 @@ const fakeFs: LocalFS = {
     process.exit(1);
   }
   console.log("OK: findOrphans detecta archivos huérfanos en ambas direcciones");
+
+  const remoteTime = Date.parse("2026-01-01T00:00:00.000Z");
+  const writes: Record<string, string> = {};
+  const mtimes: Record<string, number> = {};
+  const uploads: Record<string, string> = {};
+  const conflictClient: DriveClient = {
+    listFiles: async () => [{ id: "x.md", name: "x.md", modifiedTime: new Date(remoteTime).toISOString() }],
+    upload: async (name, content, modifiedTime) => {
+      uploads[name] = content;
+      mtimes[name] = modifiedTime;
+    },
+    download: async () => "CONTENIDO_REMOTO",
+    touch: async (name, modifiedTime) => {
+      mtimes[name] = modifiedTime;
+    },
+    delete: async () => {},
+    commitMeta: async () => {},
+  };
+  const conflictFs: LocalFS = {
+    list: async () => [{ name: "x.md", modifiedTime: remoteTime + 1000 }],
+    read: async () => "contenido local",
+    write: async (name, content) => {
+      writes[name] = content;
+    },
+    stat: async () => remoteTime + 1000,
+    setMtime: async (name, modifiedTime) => {
+      mtimes[name] = modifiedTime;
+    },
+    delete: async () => {},
+  };
+
+  (async () => {
+    const s = sync(conflictClient, conflictFs);
+    const pullSummary = await s.pull();
+    assert(pullSummary.conflicts.length === 1 && pullSummary.conflicts[0] === "x.md", "pull: conflicto detectado");
+    const copyName = Object.keys(writes).find((n) => hasConflictSuffix(n));
+    assert(!!copyName, "pull: copia de conflicto creada en local");
+    assert(copyName && writes[copyName] === "contenido local", "pull: copia contiene la versión local");
+    assert(writes["x.md"] === "CONTENIDO_REMOTO", "pull: el remoto gana como archivo original");
+    assert(mtimes["x.md"] === remoteTime, "pull: mtime del original igualado al remoto");
+
+    const pushWrites: Record<string, string> = {};
+    const pushUploads: Record<string, string> = {};
+    const pushFs: LocalFS = {
+      list: async () => [{ name: "x.md", modifiedTime: remoteTime - 1000 }],
+      read: async () => "contenido local",
+      write: async (name, content) => {
+        pushWrites[name] = content;
+      },
+      stat: async () => remoteTime - 1000,
+      setMtime: async (name, modifiedTime) => {
+        mtimes[name] = modifiedTime;
+      },
+      delete: async () => {},
+    };
+    const pushClient: DriveClient = {
+      ...conflictClient,
+      upload: async (name, content, modifiedTime) => {
+        pushUploads[name] = content;
+        mtimes[name] = modifiedTime;
+      },
+    };
+    const pushSummary = await sync(pushClient, pushFs).push();
+    assert(pushSummary.conflicts.length === 1 && pushSummary.conflicts[0] === "x.md", "push: conflicto detectado");
+    assert(pushUploads["x.md"] === "contenido local", "push: el local gana como archivo original en GitHub");
+    const pushCopy = Object.keys(pushWrites).find((n) => hasConflictSuffix(n));
+    assert(!!pushCopy, "push: copia de conflicto creada en local");
+    assert(pushCopy && pushWrites[pushCopy] === "CONTENIDO_REMOTO", "push: copia local contiene la versión remota");
+
+    if (failed > 0) {
+      console.error(`${failed} assertions fallaron`);
+      process.exit(1);
+    }
+    console.log("OK: los conflictos crean copia local y la operación gana como archivo original");
+  })();
 })();

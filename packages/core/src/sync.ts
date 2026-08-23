@@ -27,8 +27,12 @@ export function sync(
 
       if (remoteFile && remoteTime > local.modifiedTime) {
         const copyName = conflictName(local.name);
+        const localContent = await fs.read(local.name);
+        const remoteContent = await client.download(remoteFile.id);
         log.onLog?.(`Conflicto en "${local.name}" (ambos cambiaron). Copia local: "${copyName}"`);
-        await client.upload(copyName, await fs.read(local.name), local.modifiedTime);
+        await fs.write(copyName, remoteContent);
+        await fs.setMtime(copyName, remoteTime);
+        await client.upload(local.name, localContent, local.modifiedTime);
         summary.conflicts.push(local.name);
       } else if (remoteFile && remoteTime === local.modifiedTime) {
         const localContent = await fs.read(local.name);
@@ -66,8 +70,14 @@ export function sync(
 
       if (localTime > remoteTime) {
         const copyName = conflictName(file.name);
-        log.onLog?.(`Conflicto en "${file.name}" (local más nuevo). Copia en repo: "${copyName}"`);
-        await client.upload(copyName, await fs.read(file.name), localTime);
+        const localContent = await fs.read(file.name);
+        const remoteContent = await client.download(file.id);
+        log.onLog?.(`Conflicto en "${file.name}" (local más nuevo). Copia local: "${copyName}"`);
+        await fs.write(copyName, localContent);
+        await fs.setMtime(copyName, localTime);
+        await fs.write(file.name, remoteContent);
+        await fs.setMtime(file.name, remoteTime);
+        await client.touch(file.name, remoteTime);
         summary.conflicts.push(file.name);
       } else if (localTime === remoteTime && localTime > 0) {
         const localContent = await fs.read(file.name);
@@ -77,8 +87,12 @@ export function sync(
           summary.skipped.push(file.name);
         } else {
           const copyName = conflictName(file.name);
-          log.onLog?.(`"${file.name}" cambió (contenido distinto). Copia en repo: "${copyName}"`);
-          await client.upload(copyName, localContent, localTime);
+          log.onLog?.(`"${file.name}" cambió (contenido distinto). Copia local: "${copyName}"`);
+          await fs.write(copyName, localContent);
+          await fs.setMtime(copyName, localTime);
+          await fs.write(file.name, remoteContent);
+          await fs.setMtime(file.name, remoteTime);
+          await client.touch(file.name, remoteTime);
           summary.conflicts.push(file.name);
         }
       } else {
