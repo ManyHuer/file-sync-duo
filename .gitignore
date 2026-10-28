@@ -17,6 +17,13 @@ web-build/
 npm-debug.log*
 pnpm-debug.log*
 
+# Playwright
+apps/desktop/test-results/
+apps/desktop/playwright-report/
+
+# Skills locales (spec-kit / ui-ux-pro-max)
+.opencode/skills/
+
 # Credenciales y config local
 google-credentials.json
 tokens.json

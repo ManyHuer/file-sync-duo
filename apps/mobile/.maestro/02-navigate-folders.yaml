@@ -1,0 +1,20 @@
+appId: com.filesync.app
+---
+- launchApp
+- assertVisible: "Archivos locales (.md)"
+- tapOn:
+    id: "btn-new-folder"
+- tapOn:
+    id: "input-new-folder"
+- inputText: "maestro-carpeta"
+- hideKeyboard
+- tapOn:
+    id: "btn-create-folder"
+- assertVisible:
+    id: "folder-maestro-carpeta"
+- tapOn:
+    id: "folder-maestro-carpeta"
+- assertVisible: "maestro-carpeta"
+- tapOn:
+    id: "btn-back"
+- assertVisible: "Archivos locales (.md)"

@@ -119,7 +119,7 @@ const fakeFs: LocalFS = {
     assert(pullSummary.conflicts.length === 1 && pullSummary.conflicts[0] === "x.md", "pull: conflicto detectado");
     const copyName = Object.keys(writes).find((n) => hasConflictSuffix(n));
     assert(!!copyName, "pull: copia de conflicto creada en local");
-    assert(copyName && writes[copyName] === "contenido local", "pull: copia contiene la versión local");
+    assert(!!copyName && writes[copyName] === "contenido local", "pull: copia contiene la versión local");
     assert(writes["x.md"] === "CONTENIDO_REMOTO", "pull: el remoto gana como archivo original");
     assert(mtimes["x.md"] === remoteTime, "pull: mtime del original igualado al remoto");
 
@@ -149,7 +149,7 @@ const fakeFs: LocalFS = {
     assert(pushUploads["x.md"] === "contenido local", "push: el local gana como archivo original en GitHub");
     const pushCopy = Object.keys(pushWrites).find((n) => hasConflictSuffix(n));
     assert(!!pushCopy, "push: copia de conflicto creada en local");
-    assert(pushCopy && pushWrites[pushCopy] === "CONTENIDO_REMOTO", "push: copia local contiene la versión remota");
+    assert(!!pushCopy && pushWrites[pushCopy] === "CONTENIDO_REMOTO", "push: copia local contiene la versión remota");
 
     if (failed > 0) {
       console.error(`${failed} assertions fallaron`);

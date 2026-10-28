@@ -5,9 +5,22 @@
   "scripts": {
     "desktop:dev": "pnpm --filter desktop dev",
     "mobile:start": "pnpm --filter mobile start",
-    "core:check": "pnpm --filter @filesync/core check"
+    "mobile:start:lan": "powershell -ExecutionPolicy Bypass -File scripts/start-mobile.ps1",
+    "mobile:start:tunnel": "powershell -ExecutionPolicy Bypass -File scripts/start-mobile-tunnel.ps1",
+    "mobile:url": "powershell -ExecutionPolicy Bypass -File scripts/show-expo-url.ps1",
+    "core:check": "pnpm --filter @filesync/core check",
+    "core:test": "pnpm --filter @filesync/core test",
+    "core:test:watch": "pnpm --filter @filesync/core test:watch",
+    "desktop:test:e2e": "pnpm --filter desktop test:e2e",
+    "mobile:test:e2e": "pnpm --filter mobile test:e2e",
+    "typecheck": "pnpm --filter @filesync/core typecheck && pnpm --filter desktop typecheck && pnpm --filter mobile typecheck",
+    "test": "pnpm core:test && pnpm typecheck",
+    "test:e2e": "pnpm desktop:test:e2e"
   },
   "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "electron",

@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { GitHubClient, sync, findOrphans } from "@filesync/core";
-import type { DriveClient, LocalFS } from "@filesync/core";
+import React, { useEffect, useRef, useState } from "react";
+import { GitHubClient, sync, findOrphans, IDLE, actionLabel, summarizeSync } from "@filesync/core";
+import type { ActionState, DriveClient, LocalFS, SyncSummary } from "@filesync/core";
 import "./styles.css";
 
 declare global {
@@ -28,17 +28,39 @@ interface LocalFile {
   modifiedTime: number;
 }
 
+function EmptyState({ title, hint }: { title: string; hint: string }) {
+  return (
+    <div className="empty-state">
+      <svg className="empty-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 3h7l4 4v14H7V3Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M14 3v4h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M9.5 12h6M9.5 15h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+      <p className="empty-title">{title}</p>
+      <p className="empty-hint">{hint}</p>
+    </div>
+  );
+}
+
 export default function App() {
   const [config, setConfig] = useState<{ owner: string; repo: string; hasToken: boolean; syncDir: string } | null>(null);
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [token, setToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
   const [syncDir, setSyncDir] = useState("");
   const [localFiles, setLocalFiles] = useState<LocalFile[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<
+    "push" | "pull" | "delete" | "delete-folder" | "orphans" | null
+  >(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [lastFailedSync, setLastFailedSync] = useState<"push" | "pull" | null>(null);
+  const runningRef = useRef(false);
+  const busy = busyAction !== null;
   const [log, setLog] = useState<string[]>([]);
+  const [showDebug, setShowDebug] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [deleteConfirm, setDeleteConfirm] = useState<string[] | null>(null);
@@ -73,6 +95,8 @@ export default function App() {
 
   async function handleSaveConfig() {
     setError(null);
+    setLastFailedSync(null);
+    setStatusMessage(null);
     if (!owner.trim() || !repo.trim() || !token.trim()) {
       setError("Completa owner, repo y token.");
       return;
@@ -82,13 +106,17 @@ export default function App() {
     setConfig(updated);
     if (updated) setSyncDir(updated.syncDir);
     setToken("");
+    setShowToken(false);
   }
 
   async function handleDisconnect() {
     await window.fileSync.clearConfig();
     setConfig(null);
     setToken("");
+    setShowToken(false);
     setError(null);
+    setLastFailedSync(null);
+    setStatusMessage(null);
   }
 
   async function handleChooseDir() {
@@ -107,6 +135,7 @@ export default function App() {
       return;
     }
     setError(null);
+    setLastFailedSync(null);
     const result = await window.fileSync.createFolder(name);
     if (!result.ok) {
       setError(result.error ?? "No se pudo crear la carpeta.");
@@ -121,8 +150,10 @@ export default function App() {
     if (!deleteFolderConfirm) return;
     const folder = deleteFolderConfirm;
     setDeleteFolderConfirm(null);
-    setBusy(true);
+    setBusyAction("delete-folder");
     setError(null);
+    setLastFailedSync(null);
+    setStatusMessage(null);
     try {
       const token = await window.fileSync.getToken();
       if (!token || !config) throw new Error("Configura la conexión primero.");
@@ -137,11 +168,12 @@ export default function App() {
       }
       await window.fileSync.deleteFile(folder);
       appendLog(`Carpeta "${folder}" eliminada`);
+      setStatusMessage(`Carpeta "${folder}" eliminada`);
       await refreshLocal();
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -150,8 +182,10 @@ export default function App() {
     const names = [...deleteConfirm];
     setDeleteConfirm(null);
     setSelectedFiles([]);
-    setBusy(true);
+    setBusyAction("delete");
     setError(null);
+    setLastFailedSync(null);
+    setStatusMessage(null);
     try {
       const token = await window.fileSync.getToken();
       if (!token || !config) throw new Error("Configura la conexión primero.");
@@ -164,11 +198,12 @@ export default function App() {
         await window.fileSync.deleteFile(name);
       }
       appendLog(`Eliminados: ${names.join(", ")}`);
+      setStatusMessage(`Eliminados: ${names.length} archivo${names.length === 1 ? "" : "s"}`);
       await refreshLocal();
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -214,8 +249,12 @@ export default function App() {
   }
 
   async function runSync(direction: "push" | "pull") {
-    setBusy(true);
+    if (runningRef.current) return;
+    runningRef.current = true;
+    setBusyAction(direction);
     setError(null);
+    setStatusMessage(null);
+    setLastFailedSync(null);
     setLog([]);
     try {
       const token = await window.fileSync.getToken();
@@ -228,7 +267,8 @@ export default function App() {
         setOrphanConfirm({ direction, files: orphans });
         return;
       }
-      await doSync(scopedClient, fsAdapter, direction);
+      const summary = await doSync(scopedClient, fsAdapter, direction);
+      setStatusMessage(summarizeSync(direction, summary));
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       if (msg.includes("TOKEN")) {
@@ -236,26 +276,36 @@ export default function App() {
       } else {
         setError(msg);
       }
+      setLastFailedSync(direction);
     } finally {
-      setBusy(false);
+      runningRef.current = false;
+      setBusyAction(null);
     }
   }
 
-  async function doSync(client: DriveClient, fsAdapter: LocalFS, direction: "push" | "pull") {
+  async function doSync(
+    client: DriveClient,
+    fsAdapter: LocalFS,
+    direction: "push" | "pull",
+  ): Promise<SyncSummary> {
     const s = sync(client, fsAdapter, { onLog: appendLog });
     const summary = direction === "push" ? await s.push() : await s.pull();
     appendLog("--- Resumen ---");
     appendLog(`Subidos: ${summary.uploaded.length}, Descargados: ${summary.downloaded.length}`);
     appendLog(`Conflictos: ${summary.conflicts.length}, Sin cambios: ${summary.skipped.length}`);
     await refreshLocal();
+    return summary;
   }
 
   async function confirmOrphans() {
-    if (!orphanConfirm) return;
+    if (!orphanConfirm || runningRef.current) return;
     const { direction, files } = orphanConfirm;
+    runningRef.current = true;
     setOrphanConfirm(null);
-    setBusy(true);
+    setBusyAction("orphans");
     setError(null);
+    setLastFailedSync(null);
+    setStatusMessage(null);
     try {
       const token = await window.fileSync.getToken();
       if (!token || !config) throw new Error("Configura la conexión primero.");
@@ -272,11 +322,13 @@ export default function App() {
         }
       }
       if (direction === "push") await scopedClient.commitMeta();
-      await doSync(scopedClient, fsAdapter, direction);
+      const summary = await doSync(scopedClient, fsAdapter, direction);
+      setStatusMessage(summarizeSync(direction, summary));
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
-      setBusy(false);
+      runningRef.current = false;
+      setBusyAction(null);
     }
   }
 
@@ -294,6 +346,10 @@ export default function App() {
   const folderFiles = currentFolder
     ? localFiles.filter((f) => f.name.startsWith(currentFolder + "/"))
     : [];
+  const pushState: ActionState = busyAction === "push" ? { status: "loading" } : IDLE;
+  const pullState: ActionState = busyAction === "pull" ? { status: "loading" } : IDLE;
+  const visibleLog = log.filter((line) => showDebug || !line.startsWith("[debug]"));
+  const debugCount = log.filter((line) => line.startsWith("[debug]")).length;
 
   return (
     <div className="app">
@@ -318,32 +374,69 @@ export default function App() {
           <>
             <p className="hint">Configura tu repo de GitHub para sincronizar archivos .md.</p>
             <div className="form">
-              <input
-                className="input"
-                placeholder="Owner (usuario de GitHub)"
-                value={owner}
-                onChange={(e) => setOwner(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Repo (nombre del repositorio)"
-                value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-              />
-              <input
-                className="input"
-                type="password"
-                placeholder="Personal Access Token"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-              />
+              <div className="field">
+                <label className="field-label" htmlFor="github-owner">Usuario de GitHub</label>
+                <input
+                  id="github-owner"
+                  name="owner"
+                  className="input"
+                  placeholder="tu-usuario"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  value={owner}
+                  onChange={(e) => setOwner(e.target.value)}
+                />
+              </div>
+              <div className="field">
+                <label className="field-label" htmlFor="github-repo">Repositorio</label>
+                <input
+                  id="github-repo"
+                  name="repo"
+                  className="input"
+                  placeholder="mis-notas"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  value={repo}
+                  onChange={(e) => setRepo(e.target.value)}
+                />
+              </div>
+              <div className="field">
+                <div className="field-label-row">
+                  <label className="field-label" htmlFor="github-token">Token de GitHub</label>
+                  <button
+                    type="button"
+                    className="field-action"
+                    onClick={() => setShowToken((value) => !value)}
+                  >
+                    {showToken ? "Ocultar" : "Mostrar"}
+                  </button>
+                </div>
+                <input
+                  id="github-token"
+                  name="token"
+                  className="input"
+                  type={showToken ? "text" : "password"}
+                  placeholder="ghp_..."
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                />
+                <p className="field-help">Necesita scope repo. No se comparte.</p>
+              </div>
               <button className="btn primary" onClick={handleSaveConfig}>
                 Guardar conexión
               </button>
             </div>
           </>
         )}
-        {error && <p className="error">{error}</p>}
+        {error && !lastFailedSync && <p className="error" role="alert">{error}</p>}
       </section>
 
       {config && (
@@ -356,15 +449,24 @@ export default function App() {
             </button>
           </section>
 
-          <section className="card">
+          <section className="card" aria-busy={busy}>
             <div className="actions">
-              <button className="btn primary" disabled={busy} onClick={() => runSync("push")}>
-                Subir a GitHub
+              <button className="btn primary" data-testid="btn-push" disabled={busy} onClick={() => runSync("push")}>
+                {actionLabel(pushState, "Subir a GitHub", "Subiendo...")}
               </button>
-              <button className="btn primary" disabled={busy} onClick={() => runSync("pull")}>
-                Descargar de GitHub
+              <button className="btn primary" data-testid="btn-pull" disabled={busy} onClick={() => runSync("pull")}>
+                {actionLabel(pullState, "Descargar de GitHub", "Descargando...")}
               </button>
             </div>
+            {statusMessage && <p className="success" role="status">{statusMessage}</p>}
+            {error && lastFailedSync && (
+              <div className="error-row">
+                <p className="error" role="alert">{error}</p>
+                <button className="btn" data-testid="btn-retry" disabled={busy} onClick={() => runSync(lastFailedSync)}>
+                  Reintentar
+                </button>
+              </div>
+            )}
             {currentFolder && (
               <p className="hint">Sincronizando solo la carpeta: <code>{currentFolder}</code></p>
             )}
@@ -376,9 +478,19 @@ export default function App() {
                 {currentFolder ? (
                   <>
                     <button className="btn back-btn" onClick={goToRoot}>
-                      ← Volver
+                      <svg className="icon-sm" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="m15 18-6-6 6-6"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      Volver
                     </button>
-                    <span>📁 {currentFolder}</span>
+                    <span>{currentFolder}</span>
                   </>
                 ) : (
                   <span>Archivos locales (.md)</span>
@@ -386,7 +498,16 @@ export default function App() {
               </h2>
               {!currentFolder && (
                 <button className="btn" onClick={() => setShowCreateFolder(true)}>
-                  + Nueva carpeta
+                  <svg className="icon-sm" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M12 5v14M5 12h14"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  Nueva carpeta
                 </button>
               )}
             </div>
@@ -395,6 +516,7 @@ export default function App() {
               <div className="create-folder-row">
                 <input
                   className="input"
+                  aria-label="Nombre de la carpeta"
                   placeholder="Nombre de la carpeta"
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
@@ -412,17 +534,39 @@ export default function App() {
             {!currentFolder && folders.length > 0 && (
               <div className="folder-grid">
                 {folders.map((folder) => (
-                  <div key={folder} className="folder-card" onClick={() => enterFolder(folder)}>
-                    <span className="folder-icon">📁</span>
-                    <span className="folder-name">{folder}</span>
+                  <div key={folder} className="folder-card">
                     <button
-                      className="btn danger folder-delete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteFolderConfirm(folder);
-                      }}
+                      className="folder-open"
+                      onClick={() => enterFolder(folder)}
+                      aria-label={`Abrir carpeta ${folder}`}
                     >
-                      Eliminar
+                      <svg className="folder-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-10Z"
+                          fill="currentColor"
+                        />
+                      </svg>
+                      <span className="folder-name">{folder}</span>
+                      <svg className="folder-chevron" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="m9 6 6 6-6 6"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      className="folder-delete"
+                      aria-label={`Eliminar carpeta ${folder}`}
+                      onClick={() => setDeleteFolderConfirm(folder)}
+                    >
+                      <svg className="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 12H7L6 9Z" fill="currentColor" />
+                      </svg>
+                      <span>Eliminar</span>
                     </button>
                   </div>
                 ))}
@@ -431,7 +575,10 @@ export default function App() {
 
             {currentFolder ? (
               folderFiles.length === 0 ? (
-                <p className="hint">Esta carpeta está vacía.</p>
+                <EmptyState
+                  title="Esta carpeta está vacía"
+                  hint="Añade un archivo .md a esta carpeta o vuelve a la raíz."
+                />
               ) : (
                 <ul className="file-list">
                   {folderFiles.map((f) => (
@@ -451,9 +598,10 @@ export default function App() {
                 </ul>
               )
             ) : rootFiles.length === 0 && folders.length === 0 ? (
-              <p className="hint">
-                No hay archivos .md en la carpeta FileSync. Crea uno y pulsa "Subir a GitHub".
-              </p>
+              <EmptyState
+                title="No hay notas todavía"
+                hint="Crea un archivo .md en la carpeta de sincronización y pulsa Subir a GitHub."
+              />
             ) : rootFiles.length > 0 ? (
               <ul className="file-list">
                 {rootFiles.map((f) => (
@@ -472,7 +620,10 @@ export default function App() {
                 ))}
               </ul>
             ) : (
-              <p className="hint">No hay archivos en la raíz.</p>
+              <EmptyState
+                title="No hay archivos en la raíz"
+                hint="Entra a una carpeta o crea un archivo .md en la carpeta de sincronización."
+              />
             )}
 
             {selectedFiles.length > 0 && (
@@ -486,12 +637,25 @@ export default function App() {
 
           {log.length > 0 && (
             <section className="card">
-              <h2>Actividad</h2>
-              <div className="log">
-                {log.map((line, i) => (
-                  <div key={i} className="log-line">{line}</div>
-                ))}
+              <div className="card-header">
+                <h2>Actividad</h2>
+                {debugCount > 0 && (
+                  <button className="btn back-btn" onClick={() => setShowDebug((value) => !value)}>
+                    {showDebug ? "Ocultar detalle" : "Ver detalle"}
+                  </button>
+                )}
               </div>
+              {visibleLog.length > 0 ? (
+                <div className="log" role="log">
+                  {visibleLog.map((line, i) => (
+                    <div key={i} className="log-line">{line}</div>
+                  ))}
+                </div>
+              ) : (
+                <p className="hint">
+                  Sin actividad visible. Usa “Ver detalle” para ver los logs internos.
+                </p>
+              )}
             </section>
           )}
         </>
@@ -499,7 +663,7 @@ export default function App() {
 
       {deleteConfirm && (
         <div className="modal-overlay">
-          <div className="modal">
+          <div className="modal" role="dialog" aria-modal="true" aria-label="Eliminar archivos">
             <h3>Eliminar {deleteConfirm.length} archivo{deleteConfirm.length > 1 ? "s" : ""}</h3>
             <p>Se eliminarán de la carpeta local y de GitHub. Esta acción no se puede deshacer.</p>
             <ul className="orphan-list">
@@ -521,7 +685,7 @@ export default function App() {
 
       {deleteFolderConfirm && (
         <div className="modal-overlay">
-          <div className="modal">
+          <div className="modal" role="dialog" aria-modal="true" aria-label="Eliminar carpeta">
             <h3>Eliminar carpeta</h3>
             <p>
               Se eliminarán la carpeta <code>{deleteFolderConfirm}</code> y todos sus archivos de la carpeta
@@ -541,7 +705,7 @@ export default function App() {
 
       {orphanConfirm && (
         <div className="modal-overlay">
-          <div className="modal">
+          <div className="modal" role="dialog" aria-modal="true" aria-label="Sincronizar eliminaciones">
             <h3>Sincronizar eliminaciones</h3>
             <p>
               {orphanConfirm.direction === "push"

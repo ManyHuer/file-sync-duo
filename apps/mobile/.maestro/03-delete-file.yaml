@@ -1,0 +1,11 @@
+appId: com.filesync.app
+---
+- launchApp
+- assertVisible: "maestro-nota.md"
+- tapOn:
+    id: "select-maestro-nota.md"
+- tapOn:
+    id: "btn-delete-selected"
+- tapOn:
+    id: "btn-confirm-delete"
+- assertNotVisible: "maestro-nota.md"

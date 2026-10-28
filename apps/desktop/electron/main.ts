@@ -3,7 +3,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { readFileSync, statSync, existsSync, mkdirSync } from "node:fs";
 
-const DEFAULT_SYNC_DIR = path.join(app.getPath("documents"), "FileSync");
+const DEFAULT_SYNC_DIR =
+  process.env.FILESYNC_HOME ?? path.join(app.getPath("documents"), "FileSync");
 const CONFIG_PATH = path.join(DEFAULT_SYNC_DIR, "config.json");
 
 interface AppConfig {

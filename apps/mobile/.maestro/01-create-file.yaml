@@ -1,0 +1,30 @@
+appId: com.filesync.app
+---
+# Configura la app si es la primera ejecución.
+# Requiere: -e OWNER=... -e REPO=... -e TOKEN=...
+- launchApp
+- runFlow:
+    when:
+      visible:
+        id: "input-owner"
+    commands:
+      - tapOn:
+          id: "input-owner"
+      - inputText: ${OWNER}
+      - tapOn:
+          id: "input-repo"
+      - inputText: ${REPO}
+      - tapOn:
+          id: "input-token"
+      - inputText: ${TOKEN}
+      - hideKeyboard
+      - tapOn:
+          id: "btn-save-config"
+- assertVisible: "Archivos locales (.md)"
+- tapOn:
+    id: "input-new-file"
+- inputText: "maestro-nota"
+- hideKeyboard
+- tapOn:
+    id: "btn-create-file"
+- assertVisible: "maestro-nota.md"
