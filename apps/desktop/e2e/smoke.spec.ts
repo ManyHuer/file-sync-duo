@@ -117,7 +117,8 @@ test("configura, navega, sube, descarga y se recupera de un error", async () => 
   await page.getByLabel("Token de GitHub").fill("token-falso-de-prueba");
   await page.getByRole("button", { name: "Guardar conexión" }).click();
 
-  await expect(page.getByText(`Conectado a ${OWNER}/${REPO}`)).toBeVisible();
+  await expect(page.getByText("Conectado", { exact: true })).toBeVisible();
+  await expect(page.getByText(`${OWNER}/${REPO}`, { exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("token-falso-de-prueba");
 
   // Navegación de carpetas

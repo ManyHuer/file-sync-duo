@@ -1,49 +1,16 @@
-import React, { useEffect, useRef, useState } from "react";
-import { GitHubClient, sync, findOrphans, IDLE, actionLabel, summarizeSync } from "@filesync/core";
+import { useEffect, useRef, useState } from "react";
+import { GitHubClient, sync, findOrphans, IDLE, summarizeSync } from "@filesync/core";
 import type { ActionState, DriveClient, LocalFS, SyncSummary } from "@filesync/core";
+import type { AppConfig, BusyAction, LocalFile, SyncDirection } from "./types";
+import { ActivityLog } from "./components/ActivityLog";
+import { ConfirmDialog } from "./components/ConfirmDialog";
+import { ConnectionCard } from "./components/ConnectionCard";
+import { FileBrowser } from "./components/FileBrowser";
+import { SyncActionsCard } from "./components/SyncActionsCard";
 import "./styles.css";
 
-declare global {
-  interface Window {
-    fileSync: {
-      getConfig: () => Promise<{ owner: string; repo: string; hasToken: boolean; syncDir: string } | null>;
-      saveConfig: (config: { owner: string; repo: string; token: string; syncDir?: string }) => Promise<{ ok: boolean }>;
-      getToken: () => Promise<string | null>;
-      clearConfig: () => Promise<{ ok: boolean }>;
-      chooseDir: () => Promise<{ canceled: boolean; syncDir?: string }>;
-      listFiles: () => Promise<{ name: string; modifiedTime: number }[]>;
-      listFolders: () => Promise<string[]>;
-      readFile: (name: string) => Promise<string>;
-      writeFile: (name: string, content: string) => Promise<void>;
-      statFile: (name: string) => Promise<number>;
-      setMtime: (name: string, modifiedTime: number) => Promise<void>;
-      deleteFile: (name: string) => Promise<void>;
-      createFolder: (name: string) => Promise<{ ok: boolean; error?: string }>;
-    };
-  }
-}
-
-interface LocalFile {
-  name: string;
-  modifiedTime: number;
-}
-
-function EmptyState({ title, hint }: { title: string; hint: string }) {
-  return (
-    <div className="empty-state">
-      <svg className="empty-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M7 3h7l4 4v14H7V3Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M14 3v4h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M9.5 12h6M9.5 15h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-      <p className="empty-title">{title}</p>
-      <p className="empty-hint">{hint}</p>
-    </div>
-  );
-}
-
 export default function App() {
-  const [config, setConfig] = useState<{ owner: string; repo: string; hasToken: boolean; syncDir: string } | null>(null);
+  const [config, setConfig] = useState<AppConfig | null>(null);
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [token, setToken] = useState("");
@@ -52,11 +19,9 @@ export default function App() {
   const [localFiles, setLocalFiles] = useState<LocalFile[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
-  const [busyAction, setBusyAction] = useState<
-    "push" | "pull" | "delete" | "delete-folder" | "orphans" | null
-  >(null);
+  const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [lastFailedSync, setLastFailedSync] = useState<"push" | "pull" | null>(null);
+  const [lastFailedSync, setLastFailedSync] = useState<SyncDirection | null>(null);
   const runningRef = useRef(false);
   const busy = busyAction !== null;
   const [log, setLog] = useState<string[]>([]);
@@ -64,7 +29,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [deleteConfirm, setDeleteConfirm] = useState<string[] | null>(null);
-  const [orphanConfirm, setOrphanConfirm] = useState<{ direction: "push" | "pull"; files: string[] } | null>(null);
+  const [orphanConfirm, setOrphanConfirm] = useState<{ direction: SyncDirection; files: string[] } | null>(null);
   const [showCreateFolder, setShowCreateFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [deleteFolderConfirm, setDeleteFolderConfirm] = useState<string | null>(null);
@@ -248,7 +213,7 @@ export default function App() {
     };
   }
 
-  async function runSync(direction: "push" | "pull") {
+  async function runSync(direction: SyncDirection) {
     if (runningRef.current) return;
     runningRef.current = true;
     setBusyAction(direction);
@@ -286,7 +251,7 @@ export default function App() {
   async function doSync(
     client: DriveClient,
     fsAdapter: LocalFS,
-    direction: "push" | "pull",
+    direction: SyncDirection,
   ): Promise<SyncSummary> {
     const s = sync(client, fsAdapter, { onLog: appendLog });
     const summary = direction === "push" ? await s.push() : await s.pull();
@@ -348,8 +313,6 @@ export default function App() {
     : [];
   const pushState: ActionState = busyAction === "push" ? { status: "loading" } : IDLE;
   const pullState: ActionState = busyAction === "pull" ? { status: "loading" } : IDLE;
-  const visibleLog = log.filter((line) => showDebug || !line.startsWith("[debug]"));
-  const debugCount = log.filter((line) => line.startsWith("[debug]")).length;
 
   return (
     <div className="app">
@@ -357,87 +320,21 @@ export default function App() {
         <h1>FileSync</h1>
       </header>
 
-      <section className="card">
-        <div className="card-header">
-          <h2>Conexión GitHub</h2>
-          {config && (
-            <button className="btn danger" onClick={handleDisconnect}>
-              Desconectar
-            </button>
-          )}
-        </div>
-        {config ? (
-          <p className="hint">
-            Conectado a <code>{config.owner}/{config.repo}</code>
-          </p>
-        ) : (
-          <>
-            <p className="hint">Configura tu repo de GitHub para sincronizar archivos .md.</p>
-            <div className="form">
-              <div className="field">
-                <label className="field-label" htmlFor="github-owner">Usuario de GitHub</label>
-                <input
-                  id="github-owner"
-                  name="owner"
-                  className="input"
-                  placeholder="tu-usuario"
-                  autoComplete="username"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  value={owner}
-                  onChange={(e) => setOwner(e.target.value)}
-                />
-              </div>
-              <div className="field">
-                <label className="field-label" htmlFor="github-repo">Repositorio</label>
-                <input
-                  id="github-repo"
-                  name="repo"
-                  className="input"
-                  placeholder="mis-notas"
-                  autoComplete="off"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  value={repo}
-                  onChange={(e) => setRepo(e.target.value)}
-                />
-              </div>
-              <div className="field">
-                <div className="field-label-row">
-                  <label className="field-label" htmlFor="github-token">Token de GitHub</label>
-                  <button
-                    type="button"
-                    className="field-action"
-                    onClick={() => setShowToken((value) => !value)}
-                  >
-                    {showToken ? "Ocultar" : "Mostrar"}
-                  </button>
-                </div>
-                <input
-                  id="github-token"
-                  name="token"
-                  className="input"
-                  type={showToken ? "text" : "password"}
-                  placeholder="ghp_..."
-                  autoComplete="off"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                />
-                <p className="field-help">Necesita scope repo. No se comparte.</p>
-              </div>
-              <button className="btn primary" onClick={handleSaveConfig}>
-                Guardar conexión
-              </button>
-            </div>
-          </>
-        )}
-        {error && !lastFailedSync && <p className="error" role="alert">{error}</p>}
-      </section>
+      <ConnectionCard
+        config={config}
+        owner={owner}
+        repo={repo}
+        token={token}
+        showToken={showToken}
+        error={error}
+        hasFailedSync={!!lastFailedSync}
+        onOwnerChange={setOwner}
+        onRepoChange={setRepo}
+        onTokenChange={setToken}
+        onToggleToken={() => setShowToken((value) => !value)}
+        onSave={handleSaveConfig}
+        onDisconnect={handleDisconnect}
+      />
 
       {config && (
         <>
@@ -449,284 +346,87 @@ export default function App() {
             </button>
           </section>
 
-          <section className="card" aria-busy={busy}>
-            <div className="actions">
-              <button className="btn primary" data-testid="btn-push" disabled={busy} onClick={() => runSync("push")}>
-                {actionLabel(pushState, "Subir a GitHub", "Subiendo...")}
-              </button>
-              <button className="btn primary" data-testid="btn-pull" disabled={busy} onClick={() => runSync("pull")}>
-                {actionLabel(pullState, "Descargar de GitHub", "Descargando...")}
-              </button>
-            </div>
-            {statusMessage && <p className="success" role="status">{statusMessage}</p>}
-            {error && lastFailedSync && (
-              <div className="error-row">
-                <p className="error" role="alert">{error}</p>
-                <button className="btn" data-testid="btn-retry" disabled={busy} onClick={() => runSync(lastFailedSync)}>
-                  Reintentar
-                </button>
-              </div>
-            )}
-            {currentFolder && (
-              <p className="hint">Sincronizando solo la carpeta: <code>{currentFolder}</code></p>
-            )}
-          </section>
+          <SyncActionsCard
+            busy={busy}
+            busyAction={busyAction}
+            pushState={pushState}
+            pullState={pullState}
+            statusMessage={statusMessage}
+            error={error}
+            lastFailedSync={lastFailedSync}
+            currentFolder={currentFolder}
+            onSync={runSync}
+          />
 
-          <section className="card">
-            <div className="card-header">
-              <h2>
-                {currentFolder ? (
-                  <>
-                    <button className="btn back-btn" onClick={goToRoot}>
-                      <svg className="icon-sm" viewBox="0 0 24 24" aria-hidden="true">
-                        <path
-                          d="m15 18-6-6 6-6"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                      Volver
-                    </button>
-                    <span>{currentFolder}</span>
-                  </>
-                ) : (
-                  <span>Archivos locales (.md)</span>
-                )}
-              </h2>
-              {!currentFolder && (
-                <button className="btn" onClick={() => setShowCreateFolder(true)}>
-                  <svg className="icon-sm" viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M12 5v14M5 12h14"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  Nueva carpeta
-                </button>
-              )}
-            </div>
+          <FileBrowser
+            currentFolder={currentFolder}
+            folders={folders}
+            rootFiles={rootFiles}
+            folderFiles={folderFiles}
+            selectedFiles={selectedFiles}
+            showCreateFolder={showCreateFolder}
+            newFolderName={newFolderName}
+            busy={busy}
+            onEnterFolder={enterFolder}
+            onGoToRoot={goToRoot}
+            onToggleSelect={toggleSelect}
+            onShowCreateFolder={setShowCreateFolder}
+            onNewFolderNameChange={setNewFolderName}
+            onCreateFolder={handleCreateFolder}
+            onAskDeleteFolder={setDeleteFolderConfirm}
+            onAskDelete={setDeleteConfirm}
+          />
 
-            {showCreateFolder && (
-              <div className="create-folder-row">
-                <input
-                  className="input"
-                  aria-label="Nombre de la carpeta"
-                  placeholder="Nombre de la carpeta"
-                  value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleCreateFolder()}
-                />
-                <button className="btn primary" onClick={handleCreateFolder}>
-                  Crear
-                </button>
-                <button className="btn" onClick={() => setShowCreateFolder(false)}>
-                  Cancelar
-                </button>
-              </div>
-            )}
-
-            {!currentFolder && folders.length > 0 && (
-              <div className="folder-grid">
-                {folders.map((folder) => (
-                  <div key={folder} className="folder-card">
-                    <button
-                      className="folder-open"
-                      onClick={() => enterFolder(folder)}
-                      aria-label={`Abrir carpeta ${folder}`}
-                    >
-                      <svg className="folder-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path
-                          d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-10Z"
-                          fill="currentColor"
-                        />
-                      </svg>
-                      <span className="folder-name">{folder}</span>
-                      <svg className="folder-chevron" viewBox="0 0 24 24" aria-hidden="true">
-                        <path
-                          d="m9 6 6 6-6 6"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </button>
-                    <button
-                      className="folder-delete"
-                      aria-label={`Eliminar carpeta ${folder}`}
-                      onClick={() => setDeleteFolderConfirm(folder)}
-                    >
-                      <svg className="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 12H7L6 9Z" fill="currentColor" />
-                      </svg>
-                      <span>Eliminar</span>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {currentFolder ? (
-              folderFiles.length === 0 ? (
-                <EmptyState
-                  title="Esta carpeta está vacía"
-                  hint="Añade un archivo .md a esta carpeta o vuelve a la raíz."
-                />
-              ) : (
-                <ul className="file-list">
-                  {folderFiles.map((f) => (
-                    <li key={f.name}>
-                      <label className="file-row">
-                        <input
-                          type="checkbox"
-                          className="file-checkbox"
-                          checked={selectedFiles.includes(f.name)}
-                          onChange={() => toggleSelect(f.name)}
-                        />
-                        <span className="file-name">{f.name.slice(currentFolder.length + 1)}</span>
-                        <span className="muted">{new Date(f.modifiedTime).toLocaleString()}</span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              )
-            ) : rootFiles.length === 0 && folders.length === 0 ? (
-              <EmptyState
-                title="No hay notas todavía"
-                hint="Crea un archivo .md en la carpeta de sincronización y pulsa Subir a GitHub."
-              />
-            ) : rootFiles.length > 0 ? (
-              <ul className="file-list">
-                {rootFiles.map((f) => (
-                  <li key={f.name}>
-                    <label className="file-row">
-                      <input
-                        type="checkbox"
-                        className="file-checkbox"
-                        checked={selectedFiles.includes(f.name)}
-                        onChange={() => toggleSelect(f.name)}
-                      />
-                      <span className="file-name">{f.name}</span>
-                      <span className="muted">{new Date(f.modifiedTime).toLocaleString()}</span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <EmptyState
-                title="No hay archivos en la raíz"
-                hint="Entra a una carpeta o crea un archivo .md en la carpeta de sincronización."
-              />
-            )}
-
-            {selectedFiles.length > 0 && (
-              <div className="delete-bar">
-                <button className="btn danger" disabled={busy} onClick={() => setDeleteConfirm([...selectedFiles])}>
-                  Eliminar seleccionados ({selectedFiles.length})
-                </button>
-              </div>
-            )}
-          </section>
-
-          {log.length > 0 && (
-            <section className="card">
-              <div className="card-header">
-                <h2>Actividad</h2>
-                {debugCount > 0 && (
-                  <button className="btn back-btn" onClick={() => setShowDebug((value) => !value)}>
-                    {showDebug ? "Ocultar detalle" : "Ver detalle"}
-                  </button>
-                )}
-              </div>
-              {visibleLog.length > 0 ? (
-                <div className="log" role="log">
-                  {visibleLog.map((line, i) => (
-                    <div key={i} className="log-line">{line}</div>
-                  ))}
-                </div>
-              ) : (
-                <p className="hint">
-                  Sin actividad visible. Usa “Ver detalle” para ver los logs internos.
-                </p>
-              )}
-            </section>
-          )}
+          <ActivityLog log={log} showDebug={showDebug} onToggleDebug={() => setShowDebug((value) => !value)} />
         </>
       )}
 
       {deleteConfirm && (
-        <div className="modal-overlay">
-          <div className="modal" role="dialog" aria-modal="true" aria-label="Eliminar archivos">
-            <h3>Eliminar {deleteConfirm.length} archivo{deleteConfirm.length > 1 ? "s" : ""}</h3>
-            <p>Se eliminarán de la carpeta local y de GitHub. Esta acción no se puede deshacer.</p>
-            <ul className="orphan-list">
-              {deleteConfirm.map((f) => (
-                <li key={f}>{f}</li>
-              ))}
-            </ul>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setDeleteConfirm(null)} disabled={busy}>
-                Cancelar
-              </button>
-              <button className="btn danger" onClick={confirmDelete} disabled={busy}>
-                Eliminar
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          ariaLabel="Eliminar archivos"
+          title={`Eliminar ${deleteConfirm.length} archivo${deleteConfirm.length > 1 ? "s" : ""}`}
+          description="Se eliminarán de la carpeta local y de GitHub. Esta acción no se puede deshacer."
+          items={deleteConfirm}
+          confirmLabel="Eliminar"
+          onCancel={() => setDeleteConfirm(null)}
+          onConfirm={confirmDelete}
+          busy={busy}
+        />
       )}
 
       {deleteFolderConfirm && (
-        <div className="modal-overlay">
-          <div className="modal" role="dialog" aria-modal="true" aria-label="Eliminar carpeta">
-            <h3>Eliminar carpeta</h3>
-            <p>
+        <ConfirmDialog
+          ariaLabel="Eliminar carpeta"
+          title="Eliminar carpeta"
+          description={
+            <>
               Se eliminarán la carpeta <code>{deleteFolderConfirm}</code> y todos sus archivos de la carpeta
               local y de GitHub. Esta acción no se puede deshacer.
-            </p>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setDeleteFolderConfirm(null)} disabled={busy}>
-                Cancelar
-              </button>
-              <button className="btn danger" onClick={confirmDeleteFolder} disabled={busy}>
-                Eliminar carpeta
-              </button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+          confirmLabel="Eliminar carpeta"
+          onCancel={() => setDeleteFolderConfirm(null)}
+          onConfirm={confirmDeleteFolder}
+          busy={busy}
+        />
       )}
 
       {orphanConfirm && (
-        <div className="modal-overlay">
-          <div className="modal" role="dialog" aria-modal="true" aria-label="Sincronizar eliminaciones">
-            <h3>Sincronizar eliminaciones</h3>
-            <p>
-              {orphanConfirm.direction === "push"
-                ? "Estos archivos existen en GitHub pero no en tu carpeta local. Se eliminarán de GitHub."
-                : "Estos archivos existen en tu carpeta local pero no en GitHub. Se eliminarán de tu carpeta."}
-            </p>
-            <ul className="orphan-list">
-              {orphanConfirm.files.map((f) => (
-                <li key={f}>{f}</li>
-              ))}
-            </ul>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setOrphanConfirm(null)} disabled={busy}>
-                No, solo sincronizar
-              </button>
-              <button className="btn danger" onClick={confirmOrphans} disabled={busy}>
-                Sí, eliminar
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          ariaLabel="Sincronizar eliminaciones"
+          title="Sincronizar eliminaciones"
+          description={
+            orphanConfirm.direction === "push"
+              ? "Estos archivos existen en GitHub pero no en tu carpeta local. Se eliminarán de GitHub."
+              : "Estos archivos existen en tu carpeta local pero no en GitHub. Se eliminarán de tu carpeta."
+          }
+          items={orphanConfirm.files}
+          cancelLabel="No, solo sincronizar"
+          confirmLabel="Sí, eliminar"
+          onCancel={() => setOrphanConfirm(null)}
+          onConfirm={confirmOrphans}
+          busy={busy}
+        />
       )}
     </div>
   );

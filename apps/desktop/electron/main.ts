@@ -141,26 +141,48 @@ function registerIpc() {
   });
 }
 
-app.whenReady().then(() => {
-  registerIpc();
-  ensureSyncDir();
-  const win = new BrowserWindow({
-    width: 1100,
-    height: 750,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) {
-    win.loadURL(devUrl);
-  } else {
-    win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
-  }
-});
+let mainWindow: BrowserWindow | null = null;
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  app.whenReady().then(() => {
+    registerIpc();
+    ensureSyncDir();
+    const win = new BrowserWindow({
+      width: 1100,
+      height: 750,
+      webPreferences: {
+        preload: path.join(__dirname, "preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+
+    mainWindow = win;
+
+    const devUrl = process.env.VITE_DEV_SERVER_URL;
+    if (devUrl) {
+      win.loadURL(devUrl);
+    } else {
+      win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    }
+
+    win.on("closed", () => {
+      mainWindow = null;
+    });
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+}

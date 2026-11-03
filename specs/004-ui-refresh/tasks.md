@@ -69,6 +69,33 @@
 - [x] T041 Añadir `role="dialog"`, `aria-modal` y acento rojo en desktop
 - [x] T042 Añadir `testID` a las acciones del modal y actualizar Maestro
 
+## Fase 3i: Feedback y selección
+
+- [x] T043 Añadir spinner a los botones de sincronización en desktop y mobile
+- [x] T044 Resaltar la fila del archivo seleccionado
+- [x] T045 Convertir éxito y error en banners con color de estado
+- [x] T046 Mantener el botón Reintentar dentro del banner de error
+
+## Fase 3j: Card de conexión
+
+- [x] T047 Convertir la conexión de mobile en una card con título y estado
+- [x] T048 Añadir punto verde “Conectado” y chip del repo en desktop y mobile
+- [x] T049 Actualizar la E2E al nuevo texto de conexión
+
+## Fase 3k: Iconos de acciones
+
+- [x] T050 Añadir icono de subida al botón Subir en desktop y mobile
+- [x] T051 Añadir icono de descarga al botón Descargar en desktop y mobile
+- [x] T052 Mantener el spinner como reemplazo del icono durante la carga
+
+## Fase 5: Componentización
+
+- [x] T053 Extraer la lógica de almacenamiento de mobile a `src/storage.ts`
+- [x] T054 Extraer los estilos compartidos de mobile a `src/styles.ts`
+- [x] T055 Dividir `App.tsx` de desktop en `ConnectionCard`, `SyncActionsCard`, `FileBrowser`, `ActivityLog`, `ConfirmDialog`, `EmptyState` e iconos
+- [x] T056 Dividir `App.tsx` de mobile en `ConnectionForm`, `ConnectionCard`, `SyncActions`, `CreateNoteRow`, `StorageSection`, `FoldersSection`, `FileList`, `ActivityLog`, `ConfirmDialog`, `EmptyState`, `SelectCheckbox` e iconos
+- [x] T057 Mantener `testID`, textos y comportamiento; verificar con typechecks, tests, E2E y bundle de Expo
+
 ## Fase 4: Verificación
 
 - [x] T015 `pnpm test` (45 tests + 3 typechecks)
@@ -84,7 +111,7 @@
 | `pnpm test` | 45 tests + typechecks core/desktop/mobile |
 | `pnpm desktop:test:e2e` | 1 test, ~10 s |
 | `expo export --platform android` | 630 módulos, bundle 1.7 MB |
-| Capturas desktop | `%TEMP%\filesync-desktop-config.png`, `filesync-desktop-folders.png`, `filesync-desktop-empty.png`, `filesync-desktop-form.png`, `filesync-desktop-icons-root.png`, `filesync-desktop-icons-folder.png`, `filesync-desktop-modal.png` |
+| Capturas desktop | `%TEMP%\filesync-desktop-config.png`, `filesync-desktop-folders.png`, `filesync-desktop-empty.png`, `filesync-desktop-form.png`, `filesync-desktop-icons-root.png`, `filesync-desktop-icons-folder.png`, `filesync-desktop-modal.png`, `filesync-desktop-feedback.png`, `filesync-desktop-connection.png`, `filesync-desktop-actions.png` |
 
 **Pendiente**: abrir la app en Expo Go y revisar spacing, tipografía, botones,
 tarjetas de carpeta y estados vacíos en el teléfono.
