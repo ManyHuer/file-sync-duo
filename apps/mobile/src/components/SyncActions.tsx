@@ -12,6 +12,7 @@ interface SyncActionsProps {
   error: string | null;
   lastFailedSync: 'push' | 'pull' | null;
   statusMessage: string | null;
+  privateFolder?: boolean;
   onSync: (direction: 'push' | 'pull') => void;
 }
 
@@ -23,6 +24,7 @@ export function SyncActions({
   error,
   lastFailedSync,
   statusMessage,
+  privateFolder,
   onSync,
 }: SyncActionsProps) {
   return (
@@ -85,6 +87,9 @@ export function SyncActions({
           <View style={styles.statusDotSuccess} />
           <Text style={styles.successText} testID="text-status">{statusMessage}</Text>
         </View>
+      )}
+      {privateFolder && (
+        <Text style={styles.muted}>Carpeta privada: se excluye de la sincronización.</Text>
       )}
     </>
   );

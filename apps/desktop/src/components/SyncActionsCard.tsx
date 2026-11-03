@@ -12,6 +12,7 @@ interface SyncActionsCardProps {
   error: string | null;
   lastFailedSync: SyncDirection | null;
   currentFolder: string | null;
+  privateFolder: boolean;
   onSync: (direction: SyncDirection) => void;
 }
 
@@ -24,6 +25,7 @@ export function SyncActionsCard({
   error,
   lastFailedSync,
   currentFolder,
+  privateFolder,
   onSync,
 }: SyncActionsCardProps) {
   return (
@@ -55,6 +57,9 @@ export function SyncActionsCard({
       )}
       {currentFolder && (
         <p className="hint">Sincronizando solo la carpeta: <code>{currentFolder}</code></p>
+      )}
+      {privateFolder && (
+        <p className="hint">Carpeta privada: se excluye de la sincronización.</p>
       )}
     </section>
   );

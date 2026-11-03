@@ -506,11 +506,23 @@ input {
   flex: none;
 }
 
+.icon-xs {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
 .folder-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
   margin-bottom: var(--space-4);
+}
+
+@media (max-width: 640px) {
+  .folder-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .folder-card {
@@ -518,6 +530,7 @@ input {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-xl);
   padding: 0;
+  position: relative;
   cursor: default;
   display: flex;
   flex-direction: column;
@@ -577,6 +590,13 @@ input {
   overflow: hidden;
 }
 
+.private-badge-corner {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 1;
+}
+
 .folder-chevron {
   width: 16px;
   height: 16px;
@@ -625,8 +645,53 @@ input {
 
 .create-folder-row {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-4);
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}
+
+.folder-section-title {
+  margin: var(--space-2) 0 var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.private-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(26, 115, 232, 0.12);
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.folder-card-private {
+  border-style: dashed;
+  padding-top: 26px;
 }
 
 .create-folder-row .input {

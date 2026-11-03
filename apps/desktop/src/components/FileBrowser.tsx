@@ -1,10 +1,21 @@
 import type { LocalFile } from "../types";
 import { EmptyState } from "./EmptyState";
-import { ChevronLeftIcon, ChevronRightIcon, FolderIcon, PlusIcon, TrashIcon } from "./icons";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  FolderIcon,
+  LockIcon,
+  PlusIcon,
+  TrashIcon,
+} from "./icons";
 
 interface FileBrowserProps {
   currentFolder: string | null;
   folders: string[];
+  privateFolders: string[];
+  currentFolderIsPrivate: boolean;
+  newFolderPrivate: boolean;
+  onNewFolderPrivateChange: (value: boolean) => void;
   rootFiles: LocalFile[];
   folderFiles: LocalFile[];
   selectedFiles: string[];
@@ -53,9 +64,49 @@ function FileList({
   );
 }
 
+function FolderCard({
+  folder,
+  isPrivate,
+  onEnter,
+  onAskDelete,
+}: {
+  folder: string;
+  isPrivate: boolean;
+  onEnter: () => void;
+  onAskDelete: () => void;
+}) {
+  return (
+    <div className={`folder-card${isPrivate ? " folder-card-private" : ""}`}>
+      {isPrivate && (
+        <span className="private-badge private-badge-corner">
+          <LockIcon />
+          Privada
+        </span>
+      )}
+      <button className="folder-open" onClick={onEnter} aria-label={`Abrir carpeta ${folder}`}>
+        <FolderIcon />
+        <span className="folder-name">{folder.split("/").pop()}</span>
+        <ChevronRightIcon />
+      </button>
+      <button
+        className="folder-delete"
+        aria-label={`Eliminar carpeta ${folder}`}
+        onClick={onAskDelete}
+      >
+        <TrashIcon />
+        <span>Eliminar</span>
+      </button>
+    </div>
+  );
+}
+
 export function FileBrowser({
   currentFolder,
   folders,
+  privateFolders,
+  currentFolderIsPrivate,
+  newFolderPrivate,
+  onNewFolderPrivateChange,
   rootFiles,
   folderFiles,
   selectedFiles,
@@ -72,6 +123,9 @@ export function FileBrowser({
   onAskDeleteFolder,
   onAskDelete,
 }: FileBrowserProps) {
+  const totalChildFolders = folders.length + privateFolders.length;
+  const createPrivate = currentFolderIsPrivate || newFolderPrivate;
+
   return (
     <section className="card">
       <div className="card-header">
@@ -83,6 +137,12 @@ export function FileBrowser({
                 Volver
               </button>
               <span>{currentFolder}</span>
+              {currentFolderIsPrivate && (
+                <span className="private-badge">
+                  <LockIcon />
+                  Privada
+                </span>
+              )}
             </>
           ) : (
             <span>Archivos locales (.md)</span>
@@ -111,6 +171,15 @@ export function FileBrowser({
             onChange={(e) => onNewFolderNameChange(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && onCreateFolder()}
           />
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={createPrivate}
+              disabled={currentFolderIsPrivate}
+              onChange={(e) => onNewFolderPrivateChange(e.target.checked)}
+            />
+            {currentFolderIsPrivate ? "Privada (heredada)" : "Carpeta privada"}
+          </label>
           <button className="btn primary" onClick={onCreateFolder}>
             Crear
           </button>
@@ -123,31 +192,36 @@ export function FileBrowser({
       {folders.length > 0 && (
         <div className="folder-grid">
           {folders.map((folder) => (
-            <div key={folder} className="folder-card">
-              <button
-                className="folder-open"
-                onClick={() => onEnterFolder(folder)}
-                aria-label={`Abrir carpeta ${folder}`}
-              >
-                <FolderIcon />
-                <span className="folder-name">{folder.split("/").pop()}</span>
-                <ChevronRightIcon />
-              </button>
-              <button
-                className="folder-delete"
-                aria-label={`Eliminar carpeta ${folder}`}
-                onClick={() => onAskDeleteFolder(folder)}
-              >
-                <TrashIcon />
-                <span>Eliminar</span>
-              </button>
-            </div>
+            <FolderCard
+              key={folder}
+              folder={folder}
+              isPrivate={false}
+              onEnter={() => onEnterFolder(folder)}
+              onAskDelete={() => onAskDeleteFolder(folder)}
+            />
           ))}
         </div>
       )}
 
+      {privateFolders.length > 0 && (
+        <>
+          <h3 className="folder-section-title">Carpetas privadas</h3>
+          <div className="folder-grid">
+            {privateFolders.map((folder) => (
+              <FolderCard
+                key={folder}
+                folder={folder}
+                isPrivate
+                onEnter={() => onEnterFolder(folder)}
+                onAskDelete={() => onAskDeleteFolder(folder)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
       {currentFolder ? (
-        folderFiles.length === 0 && folders.length === 0 ? (
+        folderFiles.length === 0 && totalChildFolders === 0 ? (
           <EmptyState
             title="Esta carpeta está vacía"
             hint="Añade un archivo .md a esta carpeta o crea una subcarpeta."
@@ -160,7 +234,7 @@ export function FileBrowser({
             onToggleSelect={onToggleSelect}
           />
         ) : null
-      ) : rootFiles.length === 0 && folders.length === 0 ? (
+      ) : rootFiles.length === 0 && totalChildFolders === 0 ? (
         <EmptyState
           title="No hay notas todavía"
           hint="Crea un archivo .md en la carpeta de sincronización y pulsa Subir a GitHub."

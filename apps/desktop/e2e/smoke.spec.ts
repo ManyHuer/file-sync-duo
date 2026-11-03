@@ -189,4 +189,34 @@ test("configura, navega, sube, descarga y se recupera de un error", async () => 
   await expect(page.getByRole("status").getByText('Carpeta "proyectos" eliminada')).toBeVisible({ timeout: 15_000 });
   expect(remoteFiles.has("proyectos/2026/anidada.md")).toBe(false);
   expect(fs.existsSync(path.join(home.path, "proyectos"))).toBe(false);
+
+  // Carpetas privadas: se crean, se navegan y no se sincronizan
+  await page.getByRole("button", { name: "Nueva carpeta" }).click();
+  await page.getByLabel("Nombre de la carpeta").fill("privado");
+  await page.getByLabel("Carpeta privada").check();
+  await page.getByRole("button", { name: "Crear", exact: true }).click();
+  await expect(page.getByText("Carpetas privadas")).toBeVisible();
+  await expect(page.getByText("Privada", { exact: true })).toBeVisible();
+
+  fs.writeFileSync(path.join(home.path, "privado", "secreto.md"), "# Secreto\n", "utf8");
+  fs.writeFileSync(path.join(home.path, "publico.md"), "# Público\n", "utf8");
+  await push.click();
+  await expect(
+    page.getByText("Subida completada: 1 subidos, conflictos: 0, sin cambios: 1"),
+  ).toBeVisible({ timeout: 15_000 });
+  expect(remoteFiles.has("privado/secreto.md")).toBe(false);
+  expect(remoteFiles.has("publico.md")).toBe(true);
+
+  await page.getByRole("button", { name: "Abrir carpeta privado" }).click();
+  await expect(page.getByText(/Carpeta privada: se excluye de la sincronización/)).toBeVisible();
+  await push.click();
+  await expect(
+    page.getByRole("status").getByText("Carpeta privada: nada para sincronizar"),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Ir a la raíz" }).click();
+  await page.getByRole("button", { name: "Eliminar carpeta privado" }).click();
+  await page.getByRole("button", { name: "Eliminar carpeta", exact: true }).click();
+  await expect(page.getByRole("status").getByText('Carpeta "privado" eliminada')).toBeVisible({ timeout: 15_000 });
+  expect(fs.existsSync(path.join(home.path, "privado"))).toBe(false);
 });

@@ -12,6 +12,7 @@ interface AppConfig {
   repo: string;
   token: string;
   syncDir?: string;
+  privateFolders?: string[];
 }
 
 let config: AppConfig | null = null;
@@ -47,12 +48,29 @@ function ensureSyncDir() {
 function registerIpc() {
   ipcMain.handle("config:get", () => {
     const cfg = loadConfig();
-    return cfg ? { owner: cfg.owner, repo: cfg.repo, hasToken: true, syncDir: cfg.syncDir ?? DEFAULT_SYNC_DIR } : null;
+    return cfg
+      ? {
+          owner: cfg.owner,
+          repo: cfg.repo,
+          hasToken: true,
+          syncDir: cfg.syncDir ?? DEFAULT_SYNC_DIR,
+          privateFolders: cfg.privateFolders ?? [],
+        }
+      : null;
   });
 
   ipcMain.handle("config:save", async (_e, cfg: AppConfig) => {
-    config = cfg;
-    await saveConfig(cfg);
+    const previous = config ?? loadConfig();
+    config = { ...(previous ?? {}), ...cfg } as AppConfig;
+    await saveConfig(config);
+    return { ok: true };
+  });
+
+  ipcMain.handle("config:setPrivateFolders", async (_e, privateFolders: string[]) => {
+    const cfg = config ?? loadConfig();
+    if (!cfg) return { ok: false };
+    config = { ...cfg, privateFolders: [...privateFolders] };
+    await saveConfig(config);
     return { ok: true };
   });
 

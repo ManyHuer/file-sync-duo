@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { View, ScrollView, Text } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
-import { GitHubClient, sync, findOrphans, IDLE, summarizeSync } from '@filesync/core';
+import { GitHubClient, sync, findOrphans, IDLE, summarizeSync, filterPrivate, isPrivatePath } from '@filesync/core';
 import type { ActionState, DriveClient, LocalFileMeta, LocalFS, SyncSummary } from '@filesync/core';
 import { styles } from './src/styles';
 import {
@@ -50,6 +50,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [newFileName, setNewFileName] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderPrivate, setNewFolderPrivate] = useState(false);
+  const [privateFolders, setPrivateFolders] = useState<string[]>([]);
   const [showCreateFolder, setShowCreateFolder] = useState(false);
   const [usingSaf, setUsingSaf] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
@@ -71,6 +73,7 @@ export default function App() {
         setConfig(c);
         setOwner(c.owner);
         setRepo(c.repo);
+        setPrivateFolders(c.privateFolders ?? []);
       }
       refreshLocal();
     })();
@@ -88,35 +91,49 @@ export default function App() {
     setLogs((prev) => [...prev, msg]);
   }
 
+  async function persistPrivateFolders(next: string[]) {
+    setPrivateFolders(next);
+    if (!config) return;
+    await SecureStore.setItemAsync(CONFIG_KEY, JSON.stringify({ ...config, privateFolders: next }));
+  }
+
   function makeScopedClient(client: GitHubClient): DriveClient {
-    if (!currentFolder) return client;
-    const prefix = currentFolder + '/';
-    return {
-      listFiles: async () => {
-        const all = await client.listFiles();
-        return all.filter((f) => f.name.startsWith(prefix));
-      },
+    const base: DriveClient = {
+      listFiles: async () => filterPrivate(await client.listFiles(), privateFolders),
       upload: client.upload.bind(client),
       download: client.download.bind(client),
       touch: client.touch.bind(client),
       delete: client.delete.bind(client),
       commitMeta: client.commitMeta.bind(client),
     };
+    if (!currentFolder) return base;
+    const prefix = currentFolder + '/';
+    return {
+      ...base,
+      listFiles: async () => {
+        const all = await base.listFiles();
+        return all.filter((f) => f.name.startsWith(prefix));
+      },
+    };
   }
 
   function makeScopedLocalFs(): LocalFS {
-    if (!currentFolder) return localFs;
-    const prefix = currentFolder + '/';
-    return {
-      list: async () => {
-        const all = await localFs.list();
-        return all.filter((f) => f.name.startsWith(prefix));
-      },
+    const base: LocalFS = {
+      list: async () => filterPrivate(await localFs.list(), privateFolders),
       read: localFs.read,
       write: localFs.write,
       stat: localFs.stat,
       setMtime: localFs.setMtime,
       delete: localFs.delete,
+    };
+    if (!currentFolder) return base;
+    const prefix = currentFolder + '/';
+    return {
+      ...base,
+      list: async () => {
+        const all = await base.list();
+        return all.filter((f) => f.name.startsWith(prefix));
+      },
     };
   }
 
@@ -137,7 +154,7 @@ export default function App() {
       setError('Completa owner, repo y token.');
       return;
     }
-    const c = { owner: owner.trim(), repo: repo.trim(), token: token.trim() };
+    const c = { owner: owner.trim(), repo: repo.trim(), token: token.trim(), privateFolders };
     await SecureStore.setItemAsync(CONFIG_KEY, JSON.stringify(c));
     setConfig(c);
     setToken('');
@@ -147,6 +164,7 @@ export default function App() {
   async function handleLogout() {
     await SecureStore.deleteItemAsync(CONFIG_KEY);
     setConfig(null);
+    setPrivateFolders([]);
     setError(null);
     setLastFailedSync(null);
     setStatusMessage(null);
@@ -187,6 +205,11 @@ export default function App() {
   }
 
   async function runSync(direction: 'push' | 'pull') {
+    if (currentFolder && isPrivatePath(currentFolder, privateFolders)) {
+      setStatusMessage('Carpeta privada: nada para sincronizar');
+      appendLog('La carpeta actual es privada y se excluye de la sincronización.');
+      return;
+    }
     if (!config || runningRef.current) return;
     runningRef.current = true;
     setBusyAction(direction);
@@ -301,8 +324,14 @@ export default function App() {
     }
     setError(null);
     try {
-      await safCreateFolder(joinPath(currentFolder, name));
+      const fullPath = joinPath(currentFolder, name);
+      const inheritedPrivate = currentFolder ? isPrivatePath(currentFolder, privateFolders) : false;
+      await safCreateFolder(fullPath);
+      if (newFolderPrivate && !inheritedPrivate) {
+        await persistPrivateFolders([...privateFolders, fullPath]);
+      }
       setNewFolderName('');
+      setNewFolderPrivate(false);
       setShowCreateFolder(false);
       await refreshLocal();
     } catch (e: any) {
@@ -317,16 +346,29 @@ export default function App() {
     setLastFailedSync(null);
     setStatusMessage(null);
     try {
-      const client = new GitHubClient(config);
+      const folderIsPrivate = isPrivatePath(folder, privateFolders);
       const filesInFolder = localFiles.filter((f) => f.name.startsWith(folder + '/'));
-      for (const f of filesInFolder) {
-        await client.delete(f.name);
+      if (!folderIsPrivate) {
+        const client = new GitHubClient(config);
+        for (const f of filesInFolder) {
+          if (!isPrivatePath(f.name, privateFolders)) {
+            await client.delete(f.name);
+          }
+        }
+        await client.commitMeta();
       }
-      await client.commitMeta();
       for (const f of filesInFolder) {
         await localFs.delete(f.name);
       }
       await localFs.delete(folder);
+
+      const nextPrivate = privateFolders.filter(
+        (p) => p !== folder && !p.startsWith(folder + '/'),
+      );
+      if (nextPrivate.length !== privateFolders.length) {
+        await persistPrivateFolders(nextPrivate);
+      }
+
       appendLog(`Carpeta "${folder}" eliminada`);
       setStatusMessage(`Carpeta "${folder}" eliminada`);
       await refreshLocal();
@@ -359,11 +401,14 @@ export default function App() {
     setLastFailedSync(null);
     setStatusMessage(null);
     try {
-      const client = new GitHubClient(config);
-      for (const name of names) {
-        await client.delete(name);
+      const publicNames = names.filter((name) => !isPrivatePath(name, privateFolders));
+      if (publicNames.length > 0) {
+        const client = new GitHubClient(config);
+        for (const name of publicNames) {
+          await client.delete(name);
+        }
+        await client.commitMeta();
       }
-      await client.commitMeta();
       for (const name of names) {
         await localFs.delete(name);
       }
@@ -394,12 +439,18 @@ export default function App() {
 
   function setFolderFormVisible(show: boolean) {
     setShowCreateFolder(show);
-    if (!show) setNewFolderName('');
+    if (!show) {
+      setNewFolderName('');
+      setNewFolderPrivate(false);
+    }
   }
 
   const rootFiles = directFiles(localFiles, null);
   const folderFiles = directFiles(localFiles, currentFolder);
   const visibleFolders = directChildFolders(folders, currentFolder);
+  const currentFolderIsPrivate = currentFolder ? isPrivatePath(currentFolder, privateFolders) : false;
+  const publicVisibleFolders = visibleFolders.filter((f) => !isPrivatePath(f, privateFolders));
+  const privateVisibleFolders = visibleFolders.filter((f) => isPrivatePath(f, privateFolders));
   const pushState: ActionState = busyAction === 'push' ? { status: 'loading' } : IDLE;
   const pullState: ActionState = busyAction === 'pull' ? { status: 'loading' } : IDLE;
 
@@ -434,6 +485,7 @@ export default function App() {
               error={error}
               lastFailedSync={lastFailedSync}
               statusMessage={statusMessage}
+              privateFolder={currentFolderIsPrivate}
               onSync={runSync}
             />
 
@@ -448,7 +500,11 @@ export default function App() {
 
             <FoldersSection
               currentFolder={currentFolder}
-              folders={visibleFolders}
+              folders={publicVisibleFolders}
+              privateFolders={privateVisibleFolders}
+              currentFolderIsPrivate={currentFolderIsPrivate}
+              newFolderPrivate={newFolderPrivate}
+              onNewFolderPrivateChange={setNewFolderPrivate}
               showCreateFolder={showCreateFolder}
               newFolderName={newFolderName}
               onNewFolderNameChange={setNewFolderName}

@@ -30,3 +30,12 @@ export function FolderGlyph() {
     </View>
   );
 }
+
+export function LockIcon() {
+  return (
+    <View style={styles.lockIcon}>
+      <View style={styles.lockShackle} />
+      <View style={styles.lockBody} />
+    </View>
+  );
+}

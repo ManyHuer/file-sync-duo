@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { GitHubClient, sync, findOrphans, IDLE, summarizeSync } from "@filesync/core";
+import { GitHubClient, sync, findOrphans, IDLE, summarizeSync, filterPrivate, isPrivatePath } from "@filesync/core";
 import type { ActionState, DriveClient, LocalFS, SyncSummary } from "@filesync/core";
 import type { AppConfig, BusyAction, LocalFile, SyncDirection } from "./types";
 import { directChildFolders, directFiles, joinPath, parentPath } from "./paths";
@@ -33,6 +33,8 @@ export default function App() {
   const [orphanConfirm, setOrphanConfirm] = useState<{ direction: SyncDirection; files: string[] } | null>(null);
   const [showCreateFolder, setShowCreateFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderPrivate, setNewFolderPrivate] = useState(false);
+  const [privateFolders, setPrivateFolders] = useState<string[]>([]);
   const [deleteFolderConfirm, setDeleteFolderConfirm] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,6 +44,7 @@ export default function App() {
         setOwner(c.owner);
         setRepo(c.repo);
         setSyncDir(c.syncDir);
+        setPrivateFolders(c.privateFolders ?? []);
       }
     });
     refreshLocal();
@@ -59,6 +62,11 @@ export default function App() {
     setLog((prev) => [...prev, msg]);
   }
 
+  async function persistPrivateFolders(next: string[]) {
+    setPrivateFolders(next);
+    await window.fileSync.setPrivateFolders(next);
+  }
+
   async function handleSaveConfig() {
     setError(null);
     setLastFailedSync(null);
@@ -70,7 +78,10 @@ export default function App() {
     const saved = await window.fileSync.saveConfig({ owner: owner.trim(), repo: repo.trim(), token: token.trim() });
     const updated = await window.fileSync.getConfig();
     setConfig(updated);
-    if (updated) setSyncDir(updated.syncDir);
+    if (updated) {
+      setSyncDir(updated.syncDir);
+      setPrivateFolders(updated.privateFolders ?? []);
+    }
     setToken("");
     setShowToken(false);
   }
@@ -78,6 +89,7 @@ export default function App() {
   async function handleDisconnect() {
     await window.fileSync.clearConfig();
     setConfig(null);
+    setPrivateFolders([]);
     setToken("");
     setShowToken(false);
     setError(null);
@@ -102,12 +114,18 @@ export default function App() {
     }
     setError(null);
     setLastFailedSync(null);
-    const result = await window.fileSync.createFolder(joinPath(currentFolder, name));
+    const fullPath = joinPath(currentFolder, name);
+    const inheritedPrivate = currentFolder ? isPrivatePath(currentFolder, privateFolders) : false;
+    const result = await window.fileSync.createFolder(fullPath);
     if (!result.ok) {
       setError(result.error ?? "No se pudo crear la carpeta.");
       return;
     }
+    if (newFolderPrivate && !inheritedPrivate) {
+      await persistPrivateFolders([...privateFolders, fullPath]);
+    }
     setNewFolderName("");
+    setNewFolderPrivate(false);
     setShowCreateFolder(false);
     await refreshLocal();
   }
@@ -121,18 +139,31 @@ export default function App() {
     setLastFailedSync(null);
     setStatusMessage(null);
     try {
-      const token = await window.fileSync.getToken();
-      if (!token || !config) throw new Error("Configura la conexión primero.");
-      const client = new GitHubClient({ owner: config.owner, repo: config.repo, token });
+      const folderIsPrivate = isPrivatePath(folder, privateFolders);
       const filesInFolder = localFiles.filter((f) => f.name.startsWith(folder + "/"));
-      for (const f of filesInFolder) {
-        await client.delete(f.name);
+      if (!folderIsPrivate) {
+        const token = await window.fileSync.getToken();
+        if (!token || !config) throw new Error("Configura la conexión primero.");
+        const client = new GitHubClient({ owner: config.owner, repo: config.repo, token });
+        for (const f of filesInFolder) {
+          if (!isPrivatePath(f.name, privateFolders)) {
+            await client.delete(f.name);
+          }
+        }
+        await client.commitMeta();
       }
-      await client.commitMeta();
       for (const f of filesInFolder) {
         await window.fileSync.deleteFile(f.name);
       }
       await window.fileSync.deleteFile(folder);
+
+      const nextPrivate = privateFolders.filter(
+        (p) => p !== folder && !p.startsWith(folder + "/"),
+      );
+      if (nextPrivate.length !== privateFolders.length) {
+        await persistPrivateFolders(nextPrivate);
+      }
+
       appendLog(`Carpeta "${folder}" eliminada`);
       setStatusMessage(`Carpeta "${folder}" eliminada`);
       await refreshLocal();
@@ -153,13 +184,16 @@ export default function App() {
     setLastFailedSync(null);
     setStatusMessage(null);
     try {
-      const token = await window.fileSync.getToken();
-      if (!token || !config) throw new Error("Configura la conexión primero.");
-      const client = new GitHubClient({ owner: config.owner, repo: config.repo, token });
-      for (const name of names) {
-        await client.delete(name);
+      const publicNames = names.filter((name) => !isPrivatePath(name, privateFolders));
+      if (publicNames.length > 0) {
+        const token = await window.fileSync.getToken();
+        if (!token || !config) throw new Error("Configura la conexión primero.");
+        const client = new GitHubClient({ owner: config.owner, repo: config.repo, token });
+        for (const name of publicNames) {
+          await client.delete(name);
+        }
+        await client.commitMeta();
       }
-      await client.commitMeta();
       for (const name of names) {
         await window.fileSync.deleteFile(name);
       }
@@ -181,7 +215,7 @@ export default function App() {
 
   function makeScopedAdapter(): LocalFS {
     const base: LocalFS = {
-      list: () => window.fileSync.listFiles(),
+      list: async () => filterPrivate(await window.fileSync.listFiles(), privateFolders),
       read: (name) => window.fileSync.readFile(name),
       write: (name, content) => window.fileSync.writeFile(name, content),
       stat: (name) => window.fileSync.statFile(name),
@@ -199,22 +233,31 @@ export default function App() {
   }
 
   function makeScopedClient(client: GitHubClient): DriveClient {
-    if (!currentFolder) return client;
-    const prefix = currentFolder + "/";
-    return {
-      listFiles: async () => {
-        const all = await client.listFiles();
-        return all.filter((f) => f.name.startsWith(prefix));
-      },
+    const base: DriveClient = {
+      listFiles: async () => filterPrivate(await client.listFiles(), privateFolders),
       upload: client.upload.bind(client),
       download: client.download.bind(client),
       touch: client.touch.bind(client),
       delete: client.delete.bind(client),
       commitMeta: client.commitMeta.bind(client),
     };
+    if (!currentFolder) return base;
+    const prefix = currentFolder + "/";
+    return {
+      ...base,
+      listFiles: async () => {
+        const all = await base.listFiles();
+        return all.filter((f) => f.name.startsWith(prefix));
+      },
+    };
   }
 
   async function runSync(direction: SyncDirection) {
+    if (currentFolder && isPrivatePath(currentFolder, privateFolders)) {
+      setStatusMessage("Carpeta privada: nada para sincronizar");
+      appendLog("La carpeta actual es privada y se excluye de la sincronización.");
+      return;
+    }
     if (runningRef.current) return;
     runningRef.current = true;
     setBusyAction(direction);
@@ -316,6 +359,9 @@ export default function App() {
   const rootFiles = directFiles(localFiles, null);
   const folderFiles = directFiles(localFiles, currentFolder);
   const visibleFolders = directChildFolders(folders, currentFolder);
+  const currentFolderIsPrivate = currentFolder ? isPrivatePath(currentFolder, privateFolders) : false;
+  const publicVisibleFolders = visibleFolders.filter((f) => !isPrivatePath(f, privateFolders));
+  const privateVisibleFolders = visibleFolders.filter((f) => isPrivatePath(f, privateFolders));
   const pushState: ActionState = busyAction === "push" ? { status: "loading" } : IDLE;
   const pullState: ActionState = busyAction === "pull" ? { status: "loading" } : IDLE;
 
@@ -360,12 +406,17 @@ export default function App() {
             error={error}
             lastFailedSync={lastFailedSync}
             currentFolder={currentFolder}
+            privateFolder={currentFolderIsPrivate}
             onSync={runSync}
           />
 
           <FileBrowser
             currentFolder={currentFolder}
-            folders={visibleFolders}
+            folders={publicVisibleFolders}
+            privateFolders={privateVisibleFolders}
+            currentFolderIsPrivate={currentFolderIsPrivate}
+            newFolderPrivate={newFolderPrivate}
+            onNewFolderPrivateChange={setNewFolderPrivate}
             rootFiles={rootFiles}
             folderFiles={folderFiles}
             selectedFiles={selectedFiles}
@@ -376,7 +427,10 @@ export default function App() {
             onGoToParent={goToParent}
             onGoToRoot={goToRoot}
             onToggleSelect={toggleSelect}
-            onShowCreateFolder={setShowCreateFolder}
+            onShowCreateFolder={(show) => {
+              setShowCreateFolder(show);
+              if (!show) setNewFolderPrivate(false);
+            }}
             onNewFolderNameChange={setNewFolderName}
             onCreateFolder={handleCreateFolder}
             onAskDeleteFolder={setDeleteFolderConfirm}

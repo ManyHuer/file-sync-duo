@@ -12,6 +12,7 @@ export interface AppConfig {
   owner: string;
   repo: string;
   token: string;
+  privateFolders?: string[];
 }
 
 export const storage = {

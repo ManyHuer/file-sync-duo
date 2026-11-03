@@ -3,6 +3,7 @@ export interface AppConfig {
   repo: string;
   hasToken: boolean;
   syncDir: string;
+  privateFolders: string[];
 }
 
 export interface LocalFile {
@@ -19,6 +20,7 @@ declare global {
     fileSync: {
       getConfig: () => Promise<AppConfig | null>;
       saveConfig: (config: { owner: string; repo: string; token: string; syncDir?: string }) => Promise<{ ok: boolean }>;
+      setPrivateFolders: (folders: string[]) => Promise<{ ok: boolean }>;
       getToken: () => Promise<string | null>;
       clearConfig: () => Promise<{ ok: boolean }>;
       chooseDir: () => Promise<{ canceled: boolean; syncDir?: string }>;

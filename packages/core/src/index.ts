@@ -15,3 +15,4 @@ export type { ActionState, ActionStatus } from "./action";
 export { GitHubClient } from "./github";
 export type { GitHubConfig } from "./github";
 export { sync, findOrphans, isHiddenPath } from "./sync";
+export { filterPrivate, isPrivatePath } from "./private";
