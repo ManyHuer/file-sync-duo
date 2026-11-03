@@ -17,6 +17,13 @@ function base64ToUtf8(b64: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+function encodePath(path: string): string {
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 export interface GitHubConfig {
   owner: string;
   repo: string;
@@ -82,7 +89,7 @@ export class GitHubClient {
 
   private async getFileSha(name: string): Promise<string | null> {
     try {
-      const existing = await this.request<{ sha: string }>(this.repoPath(encodeURIComponent(name)));
+      const existing = await this.request<{ sha: string }>(this.repoPath(encodePath(name)));
       return existing.sha;
     } catch (e: any) {
       if (String(e?.message ?? e).includes("GitHub API 404")) return null;
@@ -107,30 +114,25 @@ export class GitHubClient {
 
   async listFiles(): Promise<DriveFileMeta[]> {
     const meta = await this.loadMeta();
-    let data: { name: string; type: string }[];
-    try {
-      data = await this.request<{ name: string; type: string }[]>(this.repoPath(""));
-    } catch (e: any) {
-      if (String(e?.message ?? e).includes("This repository is empty")) return [];
-      throw e;
-    }
     const result: DriveFileMeta[] = [];
-    const rootFiles = data.filter((f) => f.type === "file" && f.name.endsWith(".md"));
-    for (const f of rootFiles) {
-      result.push({
-        id: f.name,
-        name: f.name,
-        modifiedTime: new Date(meta[f.name] ?? 0).toISOString(),
-      });
-    }
-    const dirs = data.filter((d) => d.type === "dir");
-    for (const dir of dirs) {
-      const sub = await this.request<{ name: string; type: string }[]>(
-        this.repoPath(encodeURIComponent(dir.name)),
-      );
-      for (const f of sub) {
-        if (f.type === "file" && f.name.endsWith(".md")) {
-          const full = `${dir.name}/${f.name}`;
+
+    const walk = async (dirPath: string): Promise<void> => {
+      let data: { name: string; type: string }[];
+      try {
+        data = await this.request<{ name: string; type: string }[]>(
+          this.repoPath(dirPath ? encodePath(dirPath) : ""),
+        );
+      } catch (e: any) {
+        if (dirPath === "" && String(e?.message ?? e).includes("This repository is empty")) return;
+        throw e;
+      }
+
+      for (const entry of data) {
+        const full = dirPath ? `${dirPath}/${entry.name}` : entry.name;
+        if (entry.type === "dir") {
+          if (entry.name.startsWith(".")) continue;
+          await walk(full);
+        } else if (entry.type === "file" && entry.name.endsWith(".md")) {
           result.push({
             id: full,
             name: full,
@@ -138,7 +140,9 @@ export class GitHubClient {
           });
         }
       }
-    }
+    };
+
+    await walk("");
     return result;
   }
 
@@ -150,7 +154,7 @@ export class GitHubClient {
       content: utf8ToBase64(content),
     };
     if (sha) body.sha = sha;
-    await this.request(this.repoPath(encodeURIComponent(name)), {
+    await this.request(this.repoPath(encodePath(name)), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -159,7 +163,7 @@ export class GitHubClient {
   }
 
   async download(fileId: string): Promise<string> {
-    const data = await this.request<{ content: string }>(this.repoPath(encodeURIComponent(fileId)));
+    const data = await this.request<{ content: string }>(this.repoPath(encodePath(fileId)));
     return base64ToUtf8(data.content);
   }
 
@@ -171,7 +175,7 @@ export class GitHubClient {
   async delete(name: string): Promise<void> {
     const sha = await this.getFileSha(name);
     if (!sha) return;
-    await this.request(this.repoPath(encodeURIComponent(name)), {
+    await this.request(this.repoPath(encodePath(name)), {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: `delete ${name}`, sha }),

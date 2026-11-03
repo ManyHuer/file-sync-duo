@@ -17,6 +17,7 @@ import {
   storage,
 } from './src/storage';
 import type { AppConfig } from './src/storage';
+import { directChildFolders, directFiles, joinPath, parentPath } from './src/paths';
 import { ActivityLog } from './src/components/ActivityLog';
 import { ConfirmDialog } from './src/components/ConfirmDialog';
 import type { ConfirmModalState } from './src/components/ConfirmDialog';
@@ -294,13 +295,13 @@ export default function App() {
   async function handleCreateFolder() {
     const name = newFolderName.trim();
     if (!name) return;
-    if (name.startsWith('.')) {
-      setError('El nombre de la carpeta no puede empezar con un punto.');
+    if (name.split("/").some((segment) => !segment || segment.startsWith("."))) {
+      setError('El nombre de la carpeta no puede empezar con un punto ni contener segmentos vacíos.');
       return;
     }
     setError(null);
     try {
-      await safCreateFolder(name);
+      await safCreateFolder(joinPath(currentFolder, name));
       setNewFolderName('');
       setShowCreateFolder(false);
       await refreshLocal();
@@ -338,6 +339,11 @@ export default function App() {
 
   function enterFolder(folder: string) {
     setCurrentFolder(folder);
+    setSelectedFiles([]);
+  }
+
+  function goToParent() {
+    setCurrentFolder((current) => parentPath(current));
     setSelectedFiles([]);
   }
 
@@ -391,10 +397,9 @@ export default function App() {
     if (!show) setNewFolderName('');
   }
 
-  const rootFiles = localFiles.filter((f) => !f.name.includes('/'));
-  const folderFiles = currentFolder
-    ? localFiles.filter((f) => f.name.startsWith(currentFolder + '/'))
-    : [];
+  const rootFiles = directFiles(localFiles, null);
+  const folderFiles = directFiles(localFiles, currentFolder);
+  const visibleFolders = directChildFolders(folders, currentFolder);
   const pushState: ActionState = busyAction === 'push' ? { status: 'loading' } : IDLE;
   const pullState: ActionState = busyAction === 'pull' ? { status: 'loading' } : IDLE;
 
@@ -443,12 +448,13 @@ export default function App() {
 
             <FoldersSection
               currentFolder={currentFolder}
-              folders={folders}
+              folders={visibleFolders}
               showCreateFolder={showCreateFolder}
               newFolderName={newFolderName}
               onNewFolderNameChange={setNewFolderName}
               onShowCreateFolder={setFolderFormVisible}
               onCreateFolder={handleCreateFolder}
+              onGoToParent={goToParent}
               onGoToRoot={goToRoot}
               onEnterFolder={enterFolder}
               onAskDeleteFolder={askDeleteFolder}
@@ -459,6 +465,7 @@ export default function App() {
               rootFiles={rootFiles}
               folderFiles={folderFiles}
               isEmptyWorkspace={localFiles.length === 0 && folders.length === 0}
+              hasChildFolders={visibleFolders.length > 0}
               selectedFiles={selectedFiles}
               busy={busy}
               onToggleSelect={toggleSelect}

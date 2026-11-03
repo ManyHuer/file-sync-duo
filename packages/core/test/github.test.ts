@@ -110,9 +110,9 @@ describe("GitHubClient", () => {
     expect((error as Error).message).not.toContain(TOKEN);
   });
 
-  it("lista archivos .md del root y de un subdirectorio", async () => {
+  it("lista archivos .md de forma recursiva en todos los niveles", async () => {
     fetchMock
-      .mockResolvedValueOnce(response({ content: base64(JSON.stringify({ "a.md": T0 })), sha: "meta" }))
+      .mockResolvedValueOnce(response("not found", 404)) // meta
       .mockResolvedValueOnce(
         response([
           { name: "a.md", type: "file" },
@@ -120,14 +120,41 @@ describe("GitHubClient", () => {
           { name: "folder", type: "dir" },
         ]),
       )
-      .mockResolvedValueOnce(response([{ name: "b.md", type: "file" }]));
+      .mockResolvedValueOnce(
+        response([
+          { name: "b.md", type: "file" },
+          { name: "sub", type: "dir" },
+        ]),
+      )
+      .mockResolvedValueOnce(response([{ name: "c.md", type: "file" }]));
 
     const files = await newClient().listFiles();
 
     expect(files).toEqual([
-      { id: "a.md", name: "a.md", modifiedTime: new Date(T0).toISOString() },
+      { id: "a.md", name: "a.md", modifiedTime: new Date(0).toISOString() },
       { id: "folder/b.md", name: "folder/b.md", modifiedTime: new Date(0).toISOString() },
+      { id: "folder/sub/c.md", name: "folder/sub/c.md", modifiedTime: new Date(0).toISOString() },
     ]);
+  });
+
+  it("codifica cada segmento del path al subir y descargar", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response("not found", 404)) // meta
+      .mockResolvedValueOnce(response("not found", 404)) // sha
+      .mockResolvedValueOnce(response({ content: { sha: "file-sha" } }, 201)); // PUT
+
+    await newClient().upload("carpeta/nota con espacios.md", "contenido", T0);
+
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "https://api.github.com/repos/owner/repo/contents/carpeta/nota%20con%20espacios.md",
+    );
+
+    fetchMock.mockResolvedValueOnce(response({ content: base64("hola") }));
+    await newClient().download("carpeta/archivo ñ.md");
+
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      "https://api.github.com/repos/owner/repo/contents/carpeta/archivo%20%C3%B1.md",
+    );
   });
 
   it("devuelve lista vacía si el repositorio está vacío", async () => {

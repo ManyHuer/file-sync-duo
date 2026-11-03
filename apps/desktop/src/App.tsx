@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { GitHubClient, sync, findOrphans, IDLE, summarizeSync } from "@filesync/core";
 import type { ActionState, DriveClient, LocalFS, SyncSummary } from "@filesync/core";
 import type { AppConfig, BusyAction, LocalFile, SyncDirection } from "./types";
+import { directChildFolders, directFiles, joinPath, parentPath } from "./paths";
 import { ActivityLog } from "./components/ActivityLog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ConnectionCard } from "./components/ConnectionCard";
@@ -95,13 +96,13 @@ export default function App() {
   async function handleCreateFolder() {
     const name = newFolderName.trim();
     if (!name) return;
-    if (name.startsWith(".")) {
-      setError("El nombre de la carpeta no puede empezar con un punto.");
+    if (name.split("/").some((segment) => !segment || segment.startsWith("."))) {
+      setError("El nombre de la carpeta no puede empezar con un punto ni contener segmentos vacíos.");
       return;
     }
     setError(null);
     setLastFailedSync(null);
-    const result = await window.fileSync.createFolder(name);
+    const result = await window.fileSync.createFolder(joinPath(currentFolder, name));
     if (!result.ok) {
       setError(result.error ?? "No se pudo crear la carpeta.");
       return;
@@ -302,15 +303,19 @@ export default function App() {
     setSelectedFiles([]);
   }
 
+  function goToParent() {
+    setCurrentFolder((current) => parentPath(current));
+    setSelectedFiles([]);
+  }
+
   function goToRoot() {
     setCurrentFolder(null);
     setSelectedFiles([]);
   }
 
-  const rootFiles = localFiles.filter((f) => !f.name.includes("/"));
-  const folderFiles = currentFolder
-    ? localFiles.filter((f) => f.name.startsWith(currentFolder + "/"))
-    : [];
+  const rootFiles = directFiles(localFiles, null);
+  const folderFiles = directFiles(localFiles, currentFolder);
+  const visibleFolders = directChildFolders(folders, currentFolder);
   const pushState: ActionState = busyAction === "push" ? { status: "loading" } : IDLE;
   const pullState: ActionState = busyAction === "pull" ? { status: "loading" } : IDLE;
 
@@ -360,7 +365,7 @@ export default function App() {
 
           <FileBrowser
             currentFolder={currentFolder}
-            folders={folders}
+            folders={visibleFolders}
             rootFiles={rootFiles}
             folderFiles={folderFiles}
             selectedFiles={selectedFiles}
@@ -368,6 +373,7 @@ export default function App() {
             newFolderName={newFolderName}
             busy={busy}
             onEnterFolder={enterFolder}
+            onGoToParent={goToParent}
             onGoToRoot={goToRoot}
             onToggleSelect={toggleSelect}
             onShowCreateFolder={setShowCreateFolder}

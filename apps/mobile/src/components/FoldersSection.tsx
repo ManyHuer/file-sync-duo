@@ -11,6 +11,7 @@ interface FoldersSectionProps {
   onNewFolderNameChange: (value: string) => void;
   onShowCreateFolder: (show: boolean) => void;
   onCreateFolder: () => void;
+  onGoToParent: () => void;
   onGoToRoot: () => void;
   onEnterFolder: (folder: string) => void;
   onAskDeleteFolder: (folder: string) => void;
@@ -24,6 +25,7 @@ export function FoldersSection({
   onNewFolderNameChange,
   onShowCreateFolder,
   onCreateFolder,
+  onGoToParent,
   onGoToRoot,
   onEnterFolder,
   onAskDeleteFolder,
@@ -34,21 +36,27 @@ export function FoldersSection({
         <Text style={styles.sectionTitle}>
           {currentFolder ? `Carpeta: ${currentFolder}` : 'Carpetas'}
         </Text>
-        {currentFolder ? (
-          <Pressable style={({ pressed }) => [styles.button, styles.ghostSmall, pressed && styles.pressed]} testID="btn-back" onPress={onGoToRoot}>
-            <View style={styles.iconRow}>
-              <ChevronLeftIcon />
-              <Text style={styles.buttonText}>Volver</Text>
-            </View>
-          </Pressable>
-        ) : (
+        <View style={styles.folderHeaderActions}>
+          {currentFolder && (
+            <Pressable style={({ pressed }) => [styles.button, styles.ghostSmall, pressed && styles.pressed]} testID="btn-back" onPress={onGoToParent}>
+              <View style={styles.iconRow}>
+                <ChevronLeftIcon />
+                <Text style={styles.buttonText}>Volver</Text>
+              </View>
+            </Pressable>
+          )}
+          {currentFolder && (
+            <Pressable style={({ pressed }) => [styles.button, styles.ghostSmall, pressed && styles.pressed]} testID="btn-root" onPress={onGoToRoot}>
+              <Text style={styles.buttonText}>Raíz</Text>
+            </Pressable>
+          )}
           <Pressable style={({ pressed }) => [styles.button, styles.primarySmall, pressed && styles.primaryPressed]} testID="btn-new-folder" onPress={() => onShowCreateFolder(true)}>
             <View style={styles.iconRow}>
               <PlusIcon />
               <Text style={styles.buttonText}>Nueva carpeta</Text>
             </View>
           </Pressable>
-        )}
+        </View>
       </View>
 
       {showCreateFolder && (
@@ -76,7 +84,7 @@ export function FoldersSection({
         </View>
       )}
 
-      {!currentFolder && folders.length > 0 && (
+      {folders.length > 0 && (
         <View style={styles.folderGrid}>
           {folders.map((folder) => (
             <View key={folder} style={styles.folderCard}>
@@ -89,7 +97,7 @@ export function FoldersSection({
               >
                 <FolderGlyph />
                 <Text style={styles.folderName} numberOfLines={2} ellipsizeMode="tail">
-                  {folder}
+                  {folder.split('/').pop()}
                 </Text>
                 <View style={styles.folderChevron} />
               </Pressable>

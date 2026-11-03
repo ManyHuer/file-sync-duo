@@ -9,6 +9,7 @@ interface FileListProps {
   rootFiles: LocalFileMeta[];
   folderFiles: LocalFileMeta[];
   isEmptyWorkspace: boolean;
+  hasChildFolders: boolean;
   selectedFiles: string[];
   busy: boolean;
   onToggleSelect: (name: string) => void;
@@ -51,6 +52,7 @@ export function FileList({
   rootFiles,
   folderFiles,
   isEmptyWorkspace,
+  hasChildFolders,
   selectedFiles,
   busy,
   onToggleSelect,
@@ -60,12 +62,12 @@ export function FileList({
     <>
       <Text style={styles.sectionTitle}>Archivos locales (.md)</Text>
       {currentFolder ? (
-        folderFiles.length === 0 ? (
+        folderFiles.length === 0 && !hasChildFolders ? (
           <EmptyState
             title="Esta carpeta está vacía"
-            hint="Crea una nota con el botón Crear o vuelve a la raíz."
+            hint="Crea una nota con el botón Crear o crea una subcarpeta."
           />
-        ) : (
+        ) : folderFiles.length > 0 ? (
           folderFiles.map((f) => (
             <FileRow
               key={f.name}
@@ -76,7 +78,7 @@ export function FileList({
               onToggle={() => onToggleSelect(f.name)}
             />
           ))
-        )
+        ) : null
       ) : isEmptyWorkspace ? (
         <EmptyState
           title="No hay notas todavía"

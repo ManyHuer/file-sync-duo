@@ -121,11 +121,15 @@ test("configura, navega, sube, descarga y se recupera de un error", async () => 
   await expect(page.getByText(`${OWNER}/${REPO}`, { exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("token-falso-de-prueba");
 
-  // Navegación de carpetas
+  // Navegación de carpetas (varios niveles)
   await page.getByText("proyectos", { exact: true }).click();
   await expect(page.getByText(/Sincronizando solo la carpeta/)).toBeVisible();
+  await expect(page.getByText("2026", { exact: true })).toBeVisible();
+  await page.getByText("2026", { exact: true }).click();
   await expect(page.getByText("Esta carpeta está vacía")).toBeVisible();
   await page.locator(".back-btn").click();
+  await expect(page.getByText("2026", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Ir a la raíz" }).click();
   await expect(page.getByText("Archivos locales (.md)")).toBeVisible();
 
   // Subida
@@ -165,4 +169,24 @@ test("configura, navega, sube, descarga y se recupera de un error", async () => 
     page.getByText("Subida completada: 1 subidos, conflictos: 0, sin cambios: 0"),
   ).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".error")).toHaveCount(0);
+
+  // Carpetas anidadas: subir archivo profundo, navegar y borrar recursivo
+  fs.writeFileSync(path.join(home.path, "proyectos", "2026", "anidada.md"), "# Anidada\n", "utf8");
+  await push.click();
+  await expect(
+    page.getByText("Subida completada: 1 subidos, conflictos: 0, sin cambios: 1"),
+  ).toBeVisible({ timeout: 15_000 });
+  expect(remoteFiles.get("proyectos/2026/anidada.md")).toContain("Anidada");
+
+  await page.getByText("proyectos", { exact: true }).click();
+  await page.getByText("2026", { exact: true }).click();
+  await expect(page.getByText("anidada.md", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Ir a la raíz" }).click();
+
+  await page.getByRole("button", { name: "Eliminar carpeta proyectos" }).click();
+  await expect(page.getByRole("dialog", { name: "Eliminar carpeta" })).toBeVisible();
+  await page.getByRole("button", { name: "Eliminar carpeta", exact: true }).click();
+  await expect(page.getByRole("status").getByText('Carpeta "proyectos" eliminada')).toBeVisible({ timeout: 15_000 });
+  expect(remoteFiles.has("proyectos/2026/anidada.md")).toBe(false);
+  expect(fs.existsSync(path.join(home.path, "proyectos"))).toBe(false);
 });

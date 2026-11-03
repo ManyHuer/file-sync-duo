@@ -12,6 +12,7 @@ interface FileBrowserProps {
   newFolderName: string;
   busy: boolean;
   onEnterFolder: (folder: string) => void;
+  onGoToParent: () => void;
   onGoToRoot: () => void;
   onToggleSelect: (name: string) => void;
   onShowCreateFolder: (show: boolean) => void;
@@ -62,6 +63,7 @@ export function FileBrowser({
   newFolderName,
   busy,
   onEnterFolder,
+  onGoToParent,
   onGoToRoot,
   onToggleSelect,
   onShowCreateFolder,
@@ -76,7 +78,7 @@ export function FileBrowser({
         <h2>
           {currentFolder ? (
             <>
-              <button className="btn back-btn" onClick={onGoToRoot}>
+              <button className="btn back-btn" onClick={onGoToParent}>
                 <ChevronLeftIcon />
                 Volver
               </button>
@@ -86,12 +88,17 @@ export function FileBrowser({
             <span>Archivos locales (.md)</span>
           )}
         </h2>
-        {!currentFolder && (
+        <div className="card-header-actions">
+          {currentFolder && (
+            <button className="btn" onClick={onGoToRoot}>
+              Ir a la raíz
+            </button>
+          )}
           <button className="btn" onClick={() => onShowCreateFolder(true)}>
             <PlusIcon />
             Nueva carpeta
           </button>
-        )}
+        </div>
       </div>
 
       {showCreateFolder && (
@@ -113,7 +120,7 @@ export function FileBrowser({
         </div>
       )}
 
-      {!currentFolder && folders.length > 0 && (
+      {folders.length > 0 && (
         <div className="folder-grid">
           {folders.map((folder) => (
             <div key={folder} className="folder-card">
@@ -123,7 +130,7 @@ export function FileBrowser({
                 aria-label={`Abrir carpeta ${folder}`}
               >
                 <FolderIcon />
-                <span className="folder-name">{folder}</span>
+                <span className="folder-name">{folder.split("/").pop()}</span>
                 <ChevronRightIcon />
               </button>
               <button
@@ -140,19 +147,19 @@ export function FileBrowser({
       )}
 
       {currentFolder ? (
-        folderFiles.length === 0 ? (
+        folderFiles.length === 0 && folders.length === 0 ? (
           <EmptyState
             title="Esta carpeta está vacía"
-            hint="Añade un archivo .md a esta carpeta o vuelve a la raíz."
+            hint="Añade un archivo .md a esta carpeta o crea una subcarpeta."
           />
-        ) : (
+        ) : folderFiles.length > 0 ? (
           <FileList
             files={folderFiles}
             selectedFiles={selectedFiles}
             getLabel={(f) => f.name.slice(currentFolder.length + 1)}
             onToggleSelect={onToggleSelect}
           />
-        )
+        ) : null
       ) : rootFiles.length === 0 && folders.length === 0 ? (
         <EmptyState
           title="No hay notas todavía"

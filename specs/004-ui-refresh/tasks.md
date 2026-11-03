@@ -102,7 +102,7 @@
 - [x] T016 `pnpm desktop:test:e2e`
 - [x] T017 `expo export --platform android`
 - [x] T018 Capturas desktop antes/después
-- [ ] T019 Validación visual manual en Expo Go (pendiente)
+- [x] T019 Validación visual manual en Expo Go
 
 ## Verificación (2026-10-27)
 

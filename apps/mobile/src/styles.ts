@@ -266,6 +266,14 @@ export const styles = StyleSheet.create({
     gap: theme.spacing.sm,
     marginBottom: theme.spacing.sm,
   },
+  folderHeaderActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: theme.spacing.sm,
+    flexShrink: 1,
+  },
   folderText: {
     flex: 1,
     color: theme.colors.textSoft,

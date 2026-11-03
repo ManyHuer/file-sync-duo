@@ -483,6 +483,17 @@ input {
   margin: 0;
 }
 
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.card-header h2 > span {
+  overflow-wrap: anywhere;
+}
+
 .back-btn {
   min-height: 32px;
   padding: 5px 12px;

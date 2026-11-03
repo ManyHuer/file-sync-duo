@@ -98,10 +98,12 @@ function registerIpc() {
 
   ipcMain.handle("fs:listFolders", async () => {
     ensureSyncDir();
-    const entries = await fs.readdir(getSyncDir(), { withFileTypes: true });
+    const base = getSyncDir();
+    const entries = await fs.readdir(base, { withFileTypes: true, recursive: true });
     return entries
-      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-      .map((e) => e.name)
+      .filter((e) => e.isDirectory())
+      .map((e) => path.relative(base, path.join(e.parentPath, e.name)).replace(/\\/g, "/"))
+      .filter((name) => name && !name.split("/").some((seg) => seg.startsWith(".")))
       .sort();
   });
 
@@ -127,7 +129,7 @@ function registerIpc() {
     const fullPath = path.join(getSyncDir(), name);
     const stat = statSync(fullPath);
     if (stat.isDirectory()) {
-      await fs.rmdir(fullPath);
+      await fs.rm(fullPath, { recursive: true, force: true });
     } else {
       await fs.unlink(fullPath);
     }

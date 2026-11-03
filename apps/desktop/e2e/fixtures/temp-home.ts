@@ -15,7 +15,7 @@ export function createTempHome(): TempHome {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "filesync-e2e-"));
 
   fs.writeFileSync(path.join(home, "nota.md"), "# Nota de prueba\n", "utf8");
-  fs.mkdirSync(path.join(home, "proyectos"), { recursive: true });
+  fs.mkdirSync(path.join(home, "proyectos", "2026"), { recursive: true });
 
   return {
     path: home,
